@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { AssistantPanel } from "./assistant-panel";
 import { CalendarView, DashboardView } from "./calendar-dashboard";
+import { copyToClipboard } from "./clipboard";
 import { CreateView } from "./create-view";
 import { EditorView } from "./editor-view";
 import { PlusIcon } from "./icons";
@@ -12,9 +13,11 @@ import type {
   GeneratedContent,
   PlatformKey,
   PlatformStatus,
+  RedNoteContent,
   ScheduledPost,
   SessionDetail,
   SessionSummary,
+  TextPlatformContent,
   ViewKey,
 } from "./types";
 
@@ -60,6 +63,64 @@ export function CrosscastApp() {
 
     return () => {
       isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const publishDueLinkedInPosts = async () => {
+      try {
+        const response = await fetch("/api/linkedin/publish-due", {
+          method: "POST",
+        });
+        const data = (await response.json()) as {
+          results?: Array<{ scheduledPostId?: string; generationId?: string; postUrl?: string; status?: string; error?: string }>;
+          error?: string;
+        };
+
+        if (!response.ok) {
+          throw new Error(data.error ?? "Could not publish due LinkedIn posts.");
+        }
+
+        const postedResults = (data.results ?? []).filter((item) => item.status === "posted" && item.scheduledPostId);
+        if (!isMounted || !postedResults.length) return;
+
+        setScheduledPosts((items) =>
+          items.map((item) =>
+            postedResults.some((result) => result.scheduledPostId === item.id) ? { ...item, status: "posted" } : item,
+          ),
+        );
+        let postedCurrentLinkedIn = false;
+        setGeneration((current) => {
+          postedCurrentLinkedIn = postedResults.some((result) => result.generationId === current.generationIds?.linkedin);
+          if (!postedCurrentLinkedIn) return current;
+
+          return {
+            ...current,
+            platformStatuses: {
+              ...current.platformStatuses,
+              linkedin: "posted",
+            },
+          };
+        });
+        if (postedCurrentLinkedIn) {
+          setStatuses((next) => ({
+            ...next,
+            linkedin: "posted",
+          }));
+        }
+      } catch (caughtError) {
+        console.error("[LinkedIn] Due publish check failed", caughtError);
+      }
+    };
+
+    void publishDueLinkedInPosts();
+    const intervalId = window.setInterval(publishDueLinkedInPosts, 60_000);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(intervalId);
     };
   }, []);
 
@@ -324,7 +385,6 @@ export function CrosscastApp() {
 
     setGeneration((current) => ({
       ...current,
-      contentAnalysis: data.contentAnalysis ?? current.contentAnalysis,
       platforms: {
         ...current.platforms,
         [data.platform!]: nextContent,
@@ -336,8 +396,12 @@ export function CrosscastApp() {
     }));
   };
 
-  const approvePlatform = async (platform: PlatformKey, scheduledAt?: string) => {
-    const content = generation.platforms[platform];
+  const approvePlatform = async (
+    platform: PlatformKey,
+    scheduledAt?: string,
+    contentOverride?: GeneratedContent["platforms"][PlatformKey],
+  ) => {
+    const content = contentOverride ?? generation.platforms[platform];
     if (!content) {
       throw new Error("There is no content to approve for this platform.");
     }
@@ -374,6 +438,17 @@ export function CrosscastApp() {
       ...next,
       [platform]: "approved",
     }));
+    setGeneration((current) => ({
+      ...current,
+      platforms: {
+        ...current.platforms,
+        ...(contentOverride ? { [platform]: contentOverride } : {}),
+      },
+      platformStatuses: {
+        ...current.platformStatuses,
+        [platform]: "approved",
+      },
+    }));
 
     if (!scheduledAt) return;
 
@@ -405,7 +480,7 @@ export function CrosscastApp() {
   };
 
   const copyScheduledPost = async (post: ScheduledPost) => {
-    await navigator.clipboard?.writeText(post.content || post.title);
+    await copyToClipboard(post.content || post.title);
   };
 
   const viewScheduledPost = async (post: ScheduledPost) => {
@@ -423,6 +498,115 @@ export function CrosscastApp() {
     if (generation.platforms[post.platform] || session) {
       setView("editor");
     }
+  };
+
+  const removeScheduledPost = async (post: ScheduledPost) => {
+    const previousStatus = statuses[post.platform];
+    setScheduledPosts((items) => items.filter((item) => item.id !== post.id));
+    setStatuses((current) => ({ ...current, [post.platform]: "recommended" }));
+    setGeneration((current) => ({
+      ...current,
+      platformStatuses: {
+        ...current.platformStatuses,
+        [post.platform]: "recommended",
+      },
+    }));
+
+    if (!post.generationId) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/scheduled-posts?id=${encodeURIComponent(post.id)}`, {
+        method: "DELETE",
+      });
+      const data = (await response.json()) as { error?: string };
+
+      if (!response.ok) {
+        throw new Error(data.error ?? "Could not remove scheduled post.");
+      }
+    } catch (caughtError) {
+      setScheduledPosts((items) =>
+        [post, ...items.filter((item) => item.id !== post.id)].sort(
+          (a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime(),
+        ),
+      );
+      setStatuses((current) => ({ ...current, [post.platform]: previousStatus }));
+      throw caughtError;
+    }
+  };
+
+  const publishLinkedInPost = async (contentOverride?: TextPlatformContent) => {
+    const content = contentOverride ?? generation.platforms.linkedin;
+    const generationId = generation.generationIds?.linkedin;
+
+    if (!content || !("content" in content)) {
+      throw new Error("There is no LinkedIn post text to publish.");
+    }
+
+    if (!generationId) {
+      throw new Error("Generate or load a saved LinkedIn post before publishing.");
+    }
+
+    const existingScheduledPost = scheduledPosts.find(
+      (item) => item.generationId === generationId && item.platform === "linkedin",
+    );
+
+    const response = await fetch("/api/linkedin/publish", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        postText: getPlatformCopy("linkedin", content),
+        generationId,
+        scheduledPostId: existingScheduledPost?.id,
+      }),
+    });
+    const data = (await response.json()) as { postId?: string; postUrl?: string; warnings?: string[]; error?: string };
+
+    if (!response.ok || !data.postUrl) {
+      throw new Error(data.error ?? "Could not publish to LinkedIn.");
+    }
+
+    setStatuses((next) => ({
+      ...next,
+      linkedin: "posted",
+    }));
+    setGeneration((current) => ({
+      ...current,
+      platforms: {
+        ...current.platforms,
+        linkedin: current.platforms.linkedin
+          ? {
+              ...current.platforms.linkedin,
+              linkedInPostId: data.postId,
+              linkedInPostUrl: data.postUrl,
+              linkedInPublishedAt: new Date().toISOString(),
+            }
+          : current.platforms.linkedin,
+      },
+      platformStatuses: {
+        ...current.platformStatuses,
+        linkedin: "posted",
+      },
+    }));
+
+    if (existingScheduledPost) {
+      setScheduledPosts((items) =>
+        items.map((item) =>
+          item.id === existingScheduledPost.id ? { ...item, status: "posted", postUrl: data.postUrl } : item,
+        ),
+      );
+    } else {
+      const refreshResponse = await fetch("/api/scheduled-posts");
+      const refreshData = (await refreshResponse.json()) as { scheduledPosts?: ScheduledPost[] };
+      if (refreshData.scheduledPosts) {
+        setScheduledPosts(refreshData.scheduledPosts);
+      }
+    }
+
+    return { postUrl: data.postUrl };
   };
 
   return (
@@ -475,18 +659,27 @@ export function CrosscastApp() {
               ) : null}
               {view === "editor" ? (
                 <EditorView
+                  brief={brief}
                   generation={generation}
                   statuses={statuses}
                   onBack={() => setView("create")}
                   onSavePlatform={savePlatformContent}
                   onRegeneratePlatform={regeneratePlatform}
                   onApprove={approvePlatform}
+                  onPublishLinkedIn={publishLinkedInPost}
                 />
               ) : null}
               {view === "calendar" ? (
-                <CalendarView scheduledPosts={scheduledPosts} onCopyPost={copyScheduledPost} onViewPost={viewScheduledPost} />
+                <CalendarView
+                  scheduledPosts={scheduledPosts}
+                  onCopyPost={copyScheduledPost}
+                  onViewPost={viewScheduledPost}
+                  onRemovePost={removeScheduledPost}
+                />
               ) : null}
-              {view === "dashboard" ? <DashboardView scheduledPosts={scheduledPosts} /> : null}
+              {view === "dashboard" ? (
+                <DashboardView scheduledPosts={scheduledPosts} onRemovePost={removeScheduledPost} />
+              ) : null}
             </div>
 
             {isAssistantOpen && view === "create" ? (
@@ -660,9 +853,9 @@ function formatDate(value: string) {
 
 function buildStatuses(generation: GeneratedContent): Record<PlatformKey, PlatformStatus> {
   return {
-    rednote: platformStatus(generation.platforms.rednote?.recommended),
-    threads: platformStatus(generation.platforms.threads?.recommended),
-    linkedin: platformStatus(generation.platforms.linkedin?.recommended),
+    rednote: generation.platformStatuses?.rednote ?? platformStatus(generation.platforms.rednote?.recommended),
+    threads: generation.platformStatuses?.threads ?? platformStatus(generation.platforms.threads?.recommended),
+    linkedin: generation.platformStatuses?.linkedin ?? platformStatus(generation.platforms.linkedin?.recommended),
   };
 }
 
@@ -674,19 +867,31 @@ function platformStatus(recommended: boolean | undefined): PlatformStatus {
 
 function getPlatformTitle(platform: PlatformKey, content: GeneratedContent["platforms"][PlatformKey]) {
   if (!content) return "Untitled post";
-  if (platform === "rednote" && "title" in content) return content.title || "Untitled RedNote post";
+  if (platform === "rednote" && "caption" in content) return getSelectedRedNoteTitle(content) || "Untitled RedNote post";
   return content.angle || `${platform} post`;
 }
 
 function getPlatformCopy(platform: PlatformKey, content: GeneratedContent["platforms"][PlatformKey]) {
   if (!content) return "";
   if (platform === "rednote" && "caption" in content) {
-    return `${content.title}\n\n${content.caption}\n\n${content.hashtags.join(" ")}`;
+    return `${getSelectedRedNoteTitle(content)}\n\n${content.caption}`;
   }
 
   if ("content" in content) {
-    return `${content.content}${content.hashtags?.length ? `\n\n${content.hashtags.join(" ")}` : ""}`;
+    return content.content;
   }
 
   return "";
+}
+
+function getSelectedRedNoteTitle(content: RedNoteContent) {
+  const titleOptions = Array.isArray(content.titleOptions)
+    ? content.titleOptions.filter((title) => title.trim().length > 0)
+    : [];
+  const options = titleOptions.length ? titleOptions : content.title ? [content.title] : [];
+  const index =
+    typeof content.selectedTitleIndex === "number" && Number.isInteger(content.selectedTitleIndex)
+      ? Math.min(Math.max(content.selectedTitleIndex, 0), Math.max(options.length - 1, 0))
+      : 0;
+  return options[index] ?? "";
 }

@@ -29,7 +29,7 @@ export type SessionSummary = {
   brief: BriefState;
 };
 
-export type PlatformStatus = "recommended" | "skip" | "alternative" | "approved";
+export type PlatformStatus = "recommended" | "skip" | "alternative" | "approved" | "posted";
 export type ScheduledPostStatus = "scheduled" | "posted" | "draft" | "approved";
 
 export type RedNoteContent = {
@@ -37,7 +37,9 @@ export type RedNoteContent = {
   recommendedReason?: string | null;
   skipReason: string | null;
   angle: string;
-  title: string;
+  title?: string;
+  titleOptions?: string[];
+  selectedTitleIndex?: number;
   caption: string;
   hashtags: string[];
   carouselSlides: Array<{
@@ -56,6 +58,9 @@ export type TextPlatformContent = {
   content: string;
   hashtags?: string[];
   postingTips: string;
+  linkedInPostId?: string;
+  linkedInPostUrl?: string;
+  linkedInPublishedAt?: string;
 };
 
 export type GeneratedContent = {
@@ -69,6 +74,7 @@ export type GeneratedContent = {
     linkedin?: TextPlatformContent;
   };
   generationIds?: Partial<Record<PlatformKey, string>>;
+  platformStatuses?: Partial<Record<PlatformKey, PlatformStatus>>;
 };
 
 export type SessionDetail = SessionSummary & {
@@ -84,4 +90,5 @@ export type ScheduledPost = {
   scheduledAt: string;
   status: ScheduledPostStatus;
   content: string;
+  postUrl?: string | null;
 };
