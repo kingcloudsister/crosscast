@@ -88,6 +88,8 @@ export const sampleGeneration: GeneratedContent = {
       skipReason: null,
       angle: "手把手教程 - replicable workflow",
       title: "Claude上班助手设置攻略",
+      titleOptions: ["上班todo还在手动整理？", "早上少翻半小时消息", "我做了个上班助手"],
+      selectedTitleIndex: 0,
       caption:
         "前几天我用 Claude 做了一个小 workflow，结果意外地有用。\n\n它可以把 Slack follow-up、日历事项、随手记的 todo 全部整理成一个 morning command center。\n\n我的用法很简单：\n1. 先把昨天没处理完的事项丢进去\n2. 加上今天的会议和重点目标\n3. 让 Claude 按紧急程度、耗时和依赖关系排序\n4. 最后生成一份可以直接照做的 morning plan\n\n最有用的是：它不是帮我“写计划”，而是帮我看清楚今天到底先做什么。",
       hashtags: ["#AI工具", "#效率神器", "#claudecode", "#vibecoding大赏", "#打工人日常", "#小红书运营", "#工作流"],
@@ -132,6 +134,8 @@ export const sampleGeneration: GeneratedContent = {
       angle: "Why morning planning fails without a decision filter",
       content:
         "The real value of AI for daily planning is not that it writes a better todo list.\n\nIt gives you a decision filter when everything feels equally urgent.\n\nI’ve started dumping meetings, follow-ups, loose notes, and yesterday’s leftovers into Claude, then asking it to rank by urgency, impact, and dependency.\n\nThe output is less magical than people expect, but more useful: a sane first 90 minutes.",
+      topicTag: "Productivity",
+      topicAlternatives: ["AI at Work", "Startup Life"],
       postingTips: "Use only if you want a reflective angle instead of the tutorial.",
     },
     linkedin: {
@@ -162,7 +166,7 @@ export const fallbackScheduledPosts: ScheduledPost[] = [
     title: "Claude上班助手设置攻略",
     scheduledAt: "2026-05-27T09:30:00.000Z",
     status: "scheduled",
-    content: `${sampleGeneration.platforms.rednote!.title}\n\n${sampleGeneration.platforms.rednote!.caption}\n\n${sampleGeneration.platforms.rednote!.hashtags.join(" ")}`,
+    content: `${sampleGeneration.platforms.rednote!.titleOptions?.[sampleGeneration.platforms.rednote!.selectedTitleIndex ?? 0] ?? sampleGeneration.platforms.rednote!.title}\n\n${sampleGeneration.platforms.rednote!.caption}`,
   },
   {
     id: "fallback-threads-may-27",

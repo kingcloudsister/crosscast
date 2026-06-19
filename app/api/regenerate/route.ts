@@ -142,7 +142,8 @@ async function callOpenRouterForPlatform({
         "The writing examples in the system prompt exist only to demonstrate voice, tone, rhythm, and structure. Never reuse their content, scenarios, topics, phrasings, or specific details. Write only from the current raw material.",
         "Never use em-dashes, including the — character or the Chinese ——, anywhere in generated content.",
         "Never include confidential or specific business details in generated content. Genericize partner names, partner types, company names, client names, deal details, metrics, dollar figures, screenshot names, logos, and proprietary details.",
-        "For RedNote, the title must be 20 Chinese characters or fewer, counting punctuation and emoji. It should be genuine, clear, and hooked by a specific claim or curiosity gap, never clickbait or hype.",
+        "For RedNote, return titleOptions as an array of exactly 3 title strings. Each title must be 20 Chinese characters or fewer, include a genuine hook rather than a flat description, and use a different hook type from the other two. Do not return a single title field for new RedNote drafts.",
+        "For Threads, return topicTag as one primary recommended topic and topicAlternatives as exactly 2 alternatives. Each topic must be 1 to 50 characters, use common standard phrasing, contain no periods, and contain no ampersands.",
         "Do not mention internal workflow details such as user chose to generate, generate anyway, force generation, not recommended, or poor fit.",
         "Write the platform angle as audience-facing strategy only. Keep it concise: a short strategic label or phrase, ideally 6-14 words, never a paragraph.",
         "If recommended is true, include recommendedReason as 1-2 concise lines explaining why this platform fits. If recommended is false, set recommendedReason to null.",
@@ -257,6 +258,19 @@ function cleanRegeneratedPlatformContent(content: unknown, previousContent: Reco
 
   const fields = { ...(content as Record<string, unknown>) };
   const previousFields = previousContent ?? {};
+  delete fields.platform;
+
+  if (!("skipReason" in fields)) {
+    if (typeof fields.skip_reason === "string" || fields.skip_reason === null) {
+      fields.skipReason = fields.skip_reason;
+    } else if (fields.recommended === true || fields.recommendedNull === null) {
+      fields.skipReason = null;
+    } else if (typeof previousFields.skipReason === "string" || previousFields.skipReason === null) {
+      fields.skipReason = previousFields.skipReason;
+    }
+  }
+  delete fields.skip_reason;
+  delete fields.recommendedNull;
 
   if (typeof fields.angle === "string") {
     fields.angle = stripInternalWorkflowPhrases(fields.angle);
@@ -334,5 +348,14 @@ function looksLikePlatformContent(value: unknown) {
   }
 
   const fields = value as Record<string, unknown>;
-  return "recommended" in fields && "skipReason" in fields && "angle" in fields;
+  return (
+    "recommended" in fields &&
+    "angle" in fields &&
+    ("skipReason" in fields ||
+      "recommendedNull" in fields ||
+      "content" in fields ||
+      "caption" in fields ||
+      "titleOptions" in fields ||
+      "carouselSlides" in fields)
+  );
 }

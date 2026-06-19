@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { publishTextToLinkedIn } from "@/lib/linkedin";
+import { normalizeLinkedInPostUrl } from "@/lib/linkedin-url";
 import type { RedNoteContent, TextPlatformContent } from "@/components/types";
 
 type ScheduledPostRow = {
@@ -115,8 +116,10 @@ function isAlreadyPublished(content: GenerationRow["content"]) {
 }
 
 function getPublishedUrl(content: GenerationRow["content"]) {
-  if (content && typeof content === "object" && "linkedInPostUrl" in content && typeof content.linkedInPostUrl === "string") {
-    return content.linkedInPostUrl;
+  if (content && typeof content === "object") {
+    const postUrl = "linkedInPostUrl" in content && typeof content.linkedInPostUrl === "string" ? content.linkedInPostUrl : null;
+    const postId = "linkedInPostId" in content && typeof content.linkedInPostId === "string" ? content.linkedInPostId : null;
+    return normalizeLinkedInPostUrl(postUrl, postId);
   }
 
   return null;

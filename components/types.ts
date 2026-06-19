@@ -63,6 +63,11 @@ export type TextPlatformContent = {
   linkedInPublishedAt?: string;
 };
 
+export type ThreadsContent = TextPlatformContent & {
+  topicTag: string;
+  topicAlternatives: string[];
+};
+
 export type GeneratedContent = {
   contentAnalysis: {
     contentType: string;
@@ -70,7 +75,7 @@ export type GeneratedContent = {
   };
   platforms: {
     rednote?: RedNoteContent;
-    threads?: TextPlatformContent;
+    threads?: ThreadsContent;
     linkedin?: TextPlatformContent;
   };
   generationIds?: Partial<Record<PlatformKey, string>>;

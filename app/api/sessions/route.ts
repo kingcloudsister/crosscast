@@ -9,7 +9,7 @@ type SessionRow = {
   theme: string | null;
   raw_material: string | null;
   additional_context: string | null;
-  images: BriefState["images"] | null;
+  images?: BriefState["images"] | null;
   selected_platforms: PlatformKey[] | null;
 };
 
@@ -17,7 +17,7 @@ export async function GET() {
   try {
     const { data, error } = await supabaseAdmin
       .from("sessions")
-      .select("id, created_at, updated_at, theme, raw_material, additional_context, images, selected_platforms")
+      .select("id, created_at, updated_at, theme, raw_material, additional_context, selected_platforms")
       .order("updated_at", { ascending: false, nullsFirst: false })
       .limit(30)
       .abortSignal(AbortSignal.timeout(10000));

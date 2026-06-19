@@ -1,3 +1,5 @@
+import { buildLinkedInPostUrl } from "@/lib/linkedin-url";
+
 type LinkedInUserInfo = {
   sub?: string;
 };
@@ -44,7 +46,7 @@ export async function publishTextToLinkedIn(text: string): Promise<LinkedInPubli
       console.warn("[LinkedIn] Content already exists as", duplicateUrn);
       return {
         id: duplicateUrn,
-        url: `https://www.linkedin.com/feed/update/${duplicateUrn}`,
+        url: buildLinkedInPostUrl(duplicateUrn),
       };
     }
 
@@ -64,7 +66,7 @@ export async function publishTextToLinkedIn(text: string): Promise<LinkedInPubli
 
   return {
     id,
-    url: id ? `https://www.linkedin.com/feed/update/${id}` : "https://www.linkedin.com/feed/",
+    url: id ? buildLinkedInPostUrl(id) : "https://www.linkedin.com/feed/",
   };
 }
 
@@ -107,7 +109,7 @@ function extractDuplicateUrn(body: unknown): string | null {
         ? body
         : null;
   if (!text) return null;
-  const match = text.match(/duplicate of (urn:li:share:\d+)/);
+  const match = text.match(/duplicate of (urn:li:(?:share|ugcPost|activity):\d+)/);
   return match ? match[1] : null;
 }
 

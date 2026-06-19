@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { isPlatformKey } from "@/lib/platforms";
+import { normalizeLinkedInPostUrl } from "@/lib/linkedin-url";
 import type {
   PlatformKey,
   RedNoteContent,
@@ -158,8 +159,16 @@ function rowToScheduledPost(row: ScheduledPostRow, generation: GenerationRow | u
     scheduledAt: row.scheduled_for,
     status: normalizeStatus(row.status),
     content: getPlatformCopy(platform, content),
-    postUrl: "linkedInPostUrl" in content && typeof content.linkedInPostUrl === "string" ? content.linkedInPostUrl : null,
+    postUrl: getLinkedInPostUrl(content),
   };
+}
+
+function getLinkedInPostUrl(content: RedNoteContent | TextPlatformContent) {
+  if (!("linkedInPostUrl" in content || "linkedInPostId" in content)) return null;
+
+  const postUrl = "linkedInPostUrl" in content && typeof content.linkedInPostUrl === "string" ? content.linkedInPostUrl : null;
+  const postId = "linkedInPostId" in content && typeof content.linkedInPostId === "string" ? content.linkedInPostId : null;
+  return normalizeLinkedInPostUrl(postUrl, postId);
 }
 
 function getPlatformTitle(platform: PlatformKey, content: RedNoteContent | TextPlatformContent) {

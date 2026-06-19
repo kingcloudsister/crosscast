@@ -80,6 +80,18 @@ export function CheckIcon(props: IconProps) {
   );
 }
 
+export function TrashIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M3 6h18" />
+      <path d="M8 6V4h8v2" />
+      <path d="M6 6l1 16h10l1-16" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+    </Icon>
+  );
+}
+
 export function ImageIcon(props: IconProps) {
   return (
     <Icon {...props}>

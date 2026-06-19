@@ -47,22 +47,24 @@ Voice rules (follow precisely):
 
 RedNote title rules:
 
-- HARD LIMIT: the title must be 20 Chinese characters (字) or fewer, counting every character including letters, punctuation, and emoji. Never exceed 20.
+- Generate exactly 3 title options. Each title option must be 20 Chinese characters (字) or fewer, counting every character including letters, punctuation, and emoji. Never exceed 20.
 
 - Being short is NOT permission to be flat. Within those 20 characters the title MUST contain a hook. A flat description of what the post is about is a FAILED title even if it is short and clear. Example of a FAILED title: "我给自己做了个CRM" (just states what was done, no hook, no reason to tap).
 
-- Every title must use at least one of these hook types, built from the actual topic of THIS post:
+- Every title option must use at least one of these hook types, built from the actual topic of THIS post:
   1. Provocative callout or question to the audience. Example pattern: "做BD还在用Excel管partner？"
   2. Pain relief or benefit. Example pattern: "再也不用在Excel里翻partner了"
   3. Relatable pain plus solution. Example pattern: "partner太多记不住？我做了个CRM"
   4. Bold or provocative claim. Example pattern: "PPT已经out了"
   5. Benefit tease with a concrete outcome. Example pattern: "手写plog图片轻松get"
 
-- The title must sound like the user genuinely wrote it. Never use clickbait or hype words such as 超强, 必看, 绝绝子, or 神器.
+- The 3 title options must use DIFFERENT hook types from each other, so the user gets a real choice across approaches, not minor wording variations of the same idea. For example: option 1 a provocative callout or question, option 2 a pain-relief or benefit angle, option 3 a curiosity gap or bold claim.
+
+- Each title option must sound like the user genuinely wrote it. Never use clickbait or hype words such as 超强, 必看, 绝绝子, or 神器.
 
 - These example titles demonstrate the HOOK PATTERNS only. Do NOT copy them literally. Build a hook of the same type from the user's real raw material for this specific post.
 
-- Before returning the title, self-check two things: (a) Is it within 20 characters including punctuation and emoji? (b) Does it have a genuine hook rather than just describing the post? If it reads like a flat statement, rewrite it with a hook before returning it.
+- Before returning titleOptions, self-check every option: (a) Is it within 20 characters including punctuation and emoji? (b) Does it have a genuine hook rather than just describing the post? (c) Does it use a different hook type from the other two options? If an option reads like a flat statement or repeats another option's hook type, rewrite it before returning it.
 
 Anti-patterns (never do these): marketing hype or exclamation-heavy enthusiasm; compressing into a short summary or feature list; stripping out personal/honest texture; generic openings that don't name a specific pain or make a specific claim; over-salting with English.
 
@@ -113,6 +115,7 @@ Voice rules (follow precisely):
 - CRITICAL: do NOT mechanically carry English words from the user's theme or raw material into the output just because the user typed them in English. The user's input language is convenience shorthand. Judge each word independently: would a native bilingual Chinese speaker naturally say this word in Chinese or in English in casual conversation? Write it the way they would actually say it. A product category like CRM stays English; a common noun like partner becomes 合作伙伴/合作方.
 - When unsure, prefer the natural Chinese word over keeping the English one.
 7. Voice register: reflective and intellectually curious, thinking-out-loud, but substantive. More personal and raw than LinkedIn, but every post earns its place with real insight.
+8. Also suggest a topic tag for the Threads post. Threads allows only ONE topic tag per post, so the choice matters for reach. Pick a topic that is both relevant to the content AND likely to have an active audience browsing or following it. Prefer the common, standard phrasing of a topic over a niche or fragmented variant (for example, prefer a widely used tag over an obscure spelling), because the one-tag limit means the tag must match what the target audience actually searches. The tag must be 1 to 50 characters, with no periods and no ampersands. It can contain spaces. Provide one primary recommended topic plus 2 alternatives that target slightly different audiences.
 
 Anti-patterns (never do these): generic or cliché hooks ("Have you ever wondered", "最近发现", "Here's something interesting"); shallow observations stated as insight without specific evidence; LinkedIn-style polish or corporate tone; abstract generalities any AI could write; starting anywhere other than a concrete real situation.
 
@@ -187,7 +190,7 @@ Angle field rule: keep every "angle" concise. It should be a short strategic lab
       "recommendedReason": "string or null — if recommended, 1-2 short lines explaining why this platform fits; null if not recommended",
       "skipReason": "string or null — why to skip if not recommended",
       "angle": "string — the specific angle for this platform",
-      "title": "string — the post title",
+      "titleOptions": ["exactly 3 title option strings, each under 20 Chinese characters and using a different hook type"],
       "caption": "string — the caption/body text",
       "hashtags": ["array of hashtag strings"],
       "carouselSlides": [
@@ -201,6 +204,8 @@ Angle field rule: keep every "angle" concise. It should be a short strategic lab
       "skipReason": "string or null",
       "angle": "string",
       "content": "string — the full post/thread text",
+      "topicTag": "string — the single primary recommended Threads topic tag, 1-50 characters, no periods, no ampersands",
+      "topicAlternatives": ["exactly 2 alternative Threads topic tag strings, each 1-50 characters, no periods, no ampersands"],
       "postingTips": "string"
     },
     "linkedin": {
@@ -490,8 +495,8 @@ function buildUserPrompt({
       },
       strategyProfile,
       instruction: allPlatformsRequested
-        ? "Evaluate and return platform decisions for all three platforms: rednote, threads, and linkedin. The platforms object MUST include rednote, threads, and linkedin. Returning an empty platforms object is invalid. For each platform, set recommended, recommendedReason, and skipReason based on content fit. When recommended is true, recommendedReason must be 1-2 concise lines explaining why this platform fits. Keep angle concise: a short strategic label or phrase, not a paragraph. When recommended is false, set recommendedReason to null and do NOT generate publish-ready post copy; keep the best alternative angle and skipReason, but leave draft fields empty: title/content/caption/postingTips as empty strings and hashtags/carouselSlides as empty arrays."
-        : `Generate and return the complete platform entry for ${requestedLabels}. The platforms object MUST include ${requestedLabels}. Returning an empty platforms object is invalid. Set recommended, recommendedReason, and skipReason based on content fit. When recommended is true, recommendedReason must be 1-2 concise lines explaining why this platform fits. Keep angle concise: a short strategic label or phrase, not a paragraph. When recommended is false, set recommendedReason to null and do NOT generate publish-ready post copy; keep the best alternative angle and skipReason, but leave draft fields empty: title/content/caption/postingTips as empty strings and hashtags/carouselSlides as empty arrays.`,
+        ? "Evaluate and return platform decisions for all three platforms: rednote, threads, and linkedin. The platforms object MUST include rednote, threads, and linkedin. Returning an empty platforms object is invalid. For each platform, set recommended, recommendedReason, and skipReason based on content fit. When recommended is true, recommendedReason must be 1-2 concise lines explaining why this platform fits. For recommended RedNote, return exactly 3 titleOptions with different hook types. For recommended Threads, return topicTag as one primary topic and topicAlternatives as exactly 2 alternatives. Keep angle concise: a short strategic label or phrase, not a paragraph. When recommended is false, set recommendedReason to null and do NOT generate publish-ready post copy; keep the best alternative angle and skipReason, but leave draft fields empty: titleOptions/content/caption/topicTag/postingTips as empty arrays or strings as appropriate and hashtags/carouselSlides/topicAlternatives as empty arrays."
+        : `Generate and return the complete platform entry for ${requestedLabels}. The platforms object MUST include ${requestedLabels}. Returning an empty platforms object is invalid. Set recommended, recommendedReason, and skipReason based on content fit. When recommended is true, recommendedReason must be 1-2 concise lines explaining why this platform fits. For recommended RedNote, return exactly 3 titleOptions with different hook types. For recommended Threads, return topicTag as one primary topic and topicAlternatives as exactly 2 alternatives. Keep angle concise: a short strategic label or phrase, not a paragraph. When recommended is false, set recommendedReason to null and do NOT generate publish-ready post copy; keep the best alternative angle and skipReason, but leave draft fields empty: titleOptions/content/caption/topicTag/postingTips as empty arrays or strings as appropriate and hashtags/carouselSlides/topicAlternatives as empty arrays.`,
     },
     null,
     2,
@@ -646,7 +651,7 @@ function fillMissingPlatforms(generation: GeneratedContent, requiredPlatforms: P
         recommendedReason: null,
         skipReason: "OpenRouter omitted the RedNote draft after retry. Generate again to request this platform specifically.",
         angle: "Needs regeneration for RedNote.",
-        title: "需要重新生成",
+        titleOptions: ["需要重新生成"],
         caption: "OpenRouter 没有返回小红书版本，请重新生成这一平台。",
         hashtags: [],
         carouselSlides: [],
@@ -662,6 +667,8 @@ function fillMissingPlatforms(generation: GeneratedContent, requiredPlatforms: P
         skipReason: "OpenRouter omitted the Threads draft after retry. Generate again to request this platform specifically.",
         angle: "Needs regeneration for Threads.",
         content: "OpenRouter did not return a Threads draft for this run. Regenerate this platform before posting.",
+        topicTag: "",
+        topicAlternatives: [],
         postingTips: "Regenerate this platform before posting.",
       };
       return;
@@ -706,7 +713,7 @@ function removeSkippedPlatformDrafts(generation: GeneratedContent): GeneratedCon
         recommendedReason: null,
         skipReason,
         angle: content.angle ?? "Not recommended for this brief.",
-        title: "",
+        titleOptions: [],
         caption: "",
         hashtags: [],
         carouselSlides: [],
@@ -722,6 +729,8 @@ function removeSkippedPlatformDrafts(generation: GeneratedContent): GeneratedCon
         skipReason,
         angle: content.angle ?? "Not recommended for this brief.",
         content: "",
+        topicTag: "",
+        topicAlternatives: [],
         postingTips: "",
       };
       return;

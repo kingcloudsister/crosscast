@@ -452,6 +452,8 @@ export function CrosscastApp() {
 
     if (!scheduledAt) return;
 
+    // When Threads auto-posting is implemented, pass content.topicTag to the create-container call as
+    // topic_tag. Threads requires 1-50 characters with no periods or ampersands.
     const scheduleResponse = await fetch("/api/scheduled-posts", {
       method: "POST",
       headers: {

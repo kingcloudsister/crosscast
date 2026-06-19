@@ -17,8 +17,7 @@ Content TypeRedNoteThreadsLinkedInAI tool tutorial / workflowPRIMARYSKIPSKIPAI p
 - Voice: Like texting a friend who asked "how did you do that?" Generous, conversational, slightly excited. Chinese primary, English for tech terms. Natural emoji use.
 - Structure: Short caption (150-300字) because carousel images are the real content on XHS. Numbered steps for clarity. Include the actual prompts/screenshots descriptions.
 - Energy: "我发现一个超好用的！" / "大家可以试试看"
-- Hook: Bold claim or relatable problem in the title. Must include primary keyword in first 18 characters.
-- Title: Under 20 characters ideal (max 30). Use ！and ？for CTR.
+- Title options: Generate exactly 3 titleOptions. Each must be 20 Chinese characters or fewer, have a genuine hook, and use a different hook type from the other two.
 - Hashtags: 7-12 tags. Mix of broad (#AI工具 #效率神器) and specific (tool names). Always include tool names as hashtags.
 - CTA: Natural, not commanding. "大家可以试试看" not "点赞收藏关注". Spark comments by asking a question.
 - Also suggest carousel slide structure (what goes on each slide, 6-8 slides).
@@ -33,6 +32,7 @@ Content TypeRedNoteThreadsLinkedInAI tool tutorial / workflowPRIMARYSKIPSKIPAI p
 - Energy: "最近有个观察挺有意思的" / "聊了聊发现..."
 - Hook: Personal anecdote or observation that pulls people in.
 - Format: Can be single post or multi-post thread depending on depth.
+- Also suggest a topic tag for the Threads post. Threads allows only ONE topic tag per post, so the choice matters for reach. Pick a topic that is both relevant to the content AND likely to have an active audience browsing or following it. Prefer the common, standard phrasing of a topic over a niche or fragmented variant (for example, prefer a widely used tag over an obscure spelling), because the one-tag limit means the tag must match what the target audience actually searches. The tag must be 1 to 50 characters, with no periods and no ampersands. It can contain spaces. Provide one primary recommended topic plus 2 alternatives that target slightly different audiences.
 
 ### LinkedIn — Kelly Ong
 
@@ -76,9 +76,18 @@ export const generationToolSchema = {
       properties: {
         rednote: {
           type: "object",
-          required: ["recommended", "skipReason", "angle", "title", "caption", "hashtags", "carouselSlides", "postingTips"],
+          required: [
+            "recommended",
+            "skipReason",
+            "angle",
+            "titleOptions",
+            "caption",
+            "hashtags",
+            "carouselSlides",
+            "postingTips",
+          ],
           properties: platformBase({
-            title: { type: "string" },
+            titleOptions: { type: "array", items: { type: "string" }, minItems: 3, maxItems: 3 },
             caption: { type: "string" },
             hashtags: { type: "array", items: { type: "string" } },
             carouselSlides: {
@@ -97,9 +106,11 @@ export const generationToolSchema = {
         },
         threads: {
           type: "object",
-          required: ["recommended", "skipReason", "angle", "content", "postingTips"],
+          required: ["recommended", "skipReason", "angle", "content", "topicTag", "topicAlternatives", "postingTips"],
           properties: platformBase({
             content: { type: "string" },
+            topicTag: { type: "string", minLength: 0, maxLength: 50 },
+            topicAlternatives: { type: "array", items: { type: "string", maxLength: 50 }, minItems: 0, maxItems: 2 },
           }),
         },
         linkedin: {

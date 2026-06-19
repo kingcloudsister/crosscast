@@ -3,11 +3,14 @@ import type {
   BriefState,
   GeneratedContent,
   PlatformKey,
+  PlatformStatus,
   RedNoteContent,
   SessionDetail,
   TextPlatformContent,
+  ThreadsContent,
 } from "@/components/types";
 import { isPlatformKey } from "@/lib/platforms";
+import { normalizeLinkedInPostUrl } from "@/lib/linkedin-url";
 import { fallbackSessions, sampleGeneration } from "@/components/mock-data";
 
 type RouteContext = {
@@ -31,7 +34,7 @@ type GenerationRow = {
   id: string;
   platform: string;
   status: string | null;
-  content: RedNoteContent | TextPlatformContent | Record<string, unknown> | null;
+  content: RedNoteContent | TextPlatformContent | ThreadsContent | Record<string, unknown> | null;
 };
 
 export async function GET(_request: Request, context: RouteContext) {
@@ -100,6 +103,7 @@ function buildGeneration(generations: GenerationRow[], session: SessionRow): Gen
     },
     platforms: {},
     generationIds: {},
+    platformStatuses: {},
   };
 
   generations.forEach((row) => {
@@ -108,15 +112,37 @@ function buildGeneration(generations: GenerationRow[], session: SessionRow): Gen
     if (row.platform === "rednote") {
       generation.platforms.rednote = row.content as RedNoteContent;
     } else if (row.platform === "threads") {
-      generation.platforms.threads = row.content as TextPlatformContent;
+      generation.platforms.threads = row.content as ThreadsContent;
     } else if (row.platform === "linkedin") {
-      generation.platforms.linkedin = row.content as TextPlatformContent;
+      generation.platforms.linkedin = normalizeLinkedInContent(row.content as TextPlatformContent);
     }
 
     generation.generationIds![row.platform] = row.id;
+    generation.platformStatuses![row.platform] = normalizePlatformStatus(row.status, row.content);
   });
 
   return Object.keys(generation.platforms).length ? generation : null;
+}
+
+function normalizeLinkedInContent(content: TextPlatformContent): TextPlatformContent {
+  const postUrl = typeof content.linkedInPostUrl === "string" ? content.linkedInPostUrl : null;
+  const postId = typeof content.linkedInPostId === "string" ? content.linkedInPostId : null;
+  const normalizedPostUrl = normalizeLinkedInPostUrl(postUrl, postId);
+
+  return normalizedPostUrl
+    ? {
+        ...content,
+        linkedInPostUrl: normalizedPostUrl,
+      }
+    : content;
+}
+
+function normalizePlatformStatus(status: string | null, content: GenerationRow["content"]): PlatformStatus {
+  if (status === "posted") return "posted";
+  if (content && typeof content === "object" && "linkedInPublishedAt" in content && content.linkedInPublishedAt) return "posted";
+  if (status === "approved") return "approved";
+  if (content && typeof content === "object" && "recommended" in content && content.recommended === true) return "recommended";
+  return "skip";
 }
 
 function formatDate(value: string) {
