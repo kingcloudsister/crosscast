@@ -1,14 +1,17 @@
-import Anthropic from "@anthropic-ai/sdk";
-import type { Tool } from "@anthropic-ai/sdk/resources/messages/messages";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import type { BriefState, GeneratedContent, PlatformKey } from "@/components/types";
 import {
   GENERATION_SYSTEM_PROMPT,
-  generationToolName,
-  generationToolSchema,
   normalizeGenerationPlatforms,
   validateGeneration,
 } from "@/lib/generation-utils";
+import { sanitizePlatformContent } from "@/lib/content-sanitizer";
+import {
+  buildVisionUserContent,
+  createOpenRouterChatCompletion,
+  extractTextContent,
+  parseJsonFromOpenRouterContent,
+} from "@/lib/openrouter";
 import { isPlatformKey } from "@/lib/platforms";
 
 type RegenerateRequest = {
@@ -52,16 +55,16 @@ export async function POST(request: Request) {
 
     const sessionRow = await loadSession(generationRow.session_id);
     const platform = generationRow.platform;
-    const regenerated = await callClaudeForPlatform({
+    const regenerated = await callOpenRouterForPlatform({
       session: sessionRow,
       platform,
       previousContent: generationRow.content,
       feedback,
     });
-    const content = regenerated.platforms[platform];
+    const content = sanitizePlatformContent(platform, regenerated.platforms[platform]);
 
     if (!content) {
-      throw new Error("Claude did not return regenerated content for the requested platform.");
+      throw new Error("OpenRouter did not return regenerated content for the requested platform.");
     }
 
     const { error } = await supabaseAdmin
@@ -119,7 +122,7 @@ async function loadSession(sessionId: string): Promise<SessionRow> {
   return data;
 }
 
-async function callClaudeForPlatform({
+async function callOpenRouterForPlatform({
   session,
   platform,
   previousContent,
@@ -130,50 +133,229 @@ async function callClaudeForPlatform({
   previousContent: Record<string, unknown> | null;
   feedback: string;
 }): Promise<GeneratedContent> {
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-6",
-    max_tokens: 3000,
-    temperature: 0.7,
-    system: GENERATION_SYSTEM_PROMPT,
-    tools: [
-      {
-        name: generationToolName,
-        description: "Emit the regenerated Crosscast platform response as structured JSON.",
-        input_schema: generationToolSchema as Tool.InputSchema,
+  const prompt = JSON.stringify(
+    {
+      instruction: "Regenerate only the requested platform. Keep the same JSON structure but include only that platform.",
+      selectedPlatforms: [platform],
+      feedback,
+      styleRules: [
+        "The writing examples in the system prompt exist only to demonstrate voice, tone, rhythm, and structure. Never reuse their content, scenarios, topics, phrasings, or specific details. Write only from the current raw material.",
+        "Never use em-dashes, including the — character or the Chinese ——, anywhere in generated content.",
+        "Never include confidential or specific business details in generated content. Genericize partner names, partner types, company names, client names, deal details, metrics, dollar figures, screenshot names, logos, and proprietary details.",
+        "For RedNote, return titleOptions as an array of exactly 3 title strings. Each title must be 20 Chinese characters or fewer, include a genuine hook rather than a flat description, and use a different hook type from the other two. Do not return a single title field for new RedNote drafts.",
+        "For Threads, return topicTag as one primary recommended topic and topicAlternatives as exactly 2 alternatives. Each topic must be 1 to 50 characters, use common standard phrasing, contain no periods, and contain no ampersands.",
+        "Do not mention internal workflow details such as user chose to generate, generate anyway, force generation, not recommended, or poor fit.",
+        "Write the platform angle as audience-facing strategy only. Keep it concise: a short strategic label or phrase, ideally 6-14 words, never a paragraph.",
+        "If recommended is true, include recommendedReason as 1-2 concise lines explaining why this platform fits. If recommended is false, set recommendedReason to null.",
+        "If this platform was previously marked not recommended, still produce the best native version for the platform without apologizing or explaining the prior recommendation.",
+      ],
+      originalBrief: {
+        theme: session.theme ?? "",
+        rawMaterial: session.raw_material ?? "",
+        additionalContext: session.additional_context ?? "",
+        images: (session.images ?? []).map((image) => ({
+          name: image.name,
+        })),
       },
-    ],
-    tool_choice: {
-      type: "tool",
-      name: generationToolName,
+      previousContent,
+    },
+    null,
+    2,
+  );
+  const userContent = buildVisionUserContent(prompt, session.images ?? []);
+  console.log(
+    "[OpenRouter] Regenerate vision request content blocks:",
+    userContent.map((block) => {
+      if (block.type === "text") {
+        return {
+          type: "text",
+          characters: block.text.length,
+        };
+      }
+
+      return {
+        type: "image_url",
+        isDataUrl: block.image_url.url.startsWith("data:image/"),
+        prefix: block.image_url.url.slice(0, 32),
+        characters: block.image_url.url.length,
+      };
+    }),
+  );
+
+  const response = await createOpenRouterChatCompletion({
+    maxTokens: 3000,
+    temperature: 0.7,
+    responseFormat: {
+      type: "json_object",
     },
     messages: [
       {
+        role: "system",
+        content: GENERATION_SYSTEM_PROMPT,
+      },
+      {
         role: "user",
-        content: JSON.stringify(
-          {
-            instruction: "Regenerate only the requested platform. Keep the same JSON structure but include only that platform.",
-            selectedPlatforms: [platform],
-            feedback,
-            originalBrief: {
-              theme: session.theme ?? "",
-              rawMaterial: session.raw_material ?? "",
-              additionalContext: session.additional_context ?? "",
-              images: session.images ?? [],
-            },
-            previousContent,
-          },
-          null,
-          2,
-        ),
+        content: userContent,
       },
     ],
   });
 
-  const toolUse = response.content.find((block) => block.type === "tool_use" && block.name === generationToolName);
-  if (toolUse?.type !== "tool_use") {
-    throw new Error("Claude did not return structured regenerated content.");
+  const text = extractTextContent(response);
+  console.log("[OpenRouter] Raw regenerate chat completion response:", JSON.stringify(response, null, 2));
+  console.log("[OpenRouter] Raw regenerate message.content:", text);
+
+  if (!text) {
+    throw new Error("OpenRouter returned an empty regenerated response.");
   }
 
-  return normalizeGenerationPlatforms(validateGeneration(toolUse.input), [platform]);
+  return normalizeGenerationPlatforms(coerceRegeneratedContent(parseJsonFromOpenRouterContent(text), platform, session, previousContent), [platform]);
+}
+
+function coerceRegeneratedContent(
+  value: unknown,
+  platform: PlatformKey,
+  session: SessionRow,
+  previousContent: Record<string, unknown> | null,
+): GeneratedContent {
+  const parsed = value as Partial<GeneratedContent> & Record<string, unknown>;
+
+  if (parsed.contentAnalysis && parsed.platforms) {
+    return validateGeneration(parsed);
+  }
+
+  const platformContent = parsed[platform] ?? findPlatformContentByLooseKey(parsed, platform);
+  if (platformContent) {
+    return {
+      contentAnalysis: {
+        contentType: "Regenerated platform draft",
+        summary: session.theme ?? session.raw_material ?? "Regenerated content",
+      },
+      platforms: {
+        [platform]: cleanRegeneratedPlatformContent(platformContent, previousContent),
+      },
+    } as GeneratedContent;
+  }
+
+  if (looksLikePlatformContent(parsed)) {
+    return {
+      contentAnalysis: {
+        contentType: "Regenerated platform draft",
+        summary: session.theme ?? session.raw_material ?? "Regenerated content",
+      },
+      platforms: {
+        [platform]: cleanRegeneratedPlatformContent(parsed, previousContent),
+      },
+    } as GeneratedContent;
+  }
+
+  throw new Error("OpenRouter response did not match the expected regenerated platform structure.");
+}
+
+function cleanRegeneratedPlatformContent(content: unknown, previousContent: Record<string, unknown> | null) {
+  if (!content || typeof content !== "object" || Array.isArray(content)) {
+    return content;
+  }
+
+  const fields = { ...(content as Record<string, unknown>) };
+  const previousFields = previousContent ?? {};
+  delete fields.platform;
+
+  if (!("skipReason" in fields)) {
+    if (typeof fields.skip_reason === "string" || fields.skip_reason === null) {
+      fields.skipReason = fields.skip_reason;
+    } else if (fields.recommended === true || fields.recommendedNull === null) {
+      fields.skipReason = null;
+    } else if (typeof previousFields.skipReason === "string" || previousFields.skipReason === null) {
+      fields.skipReason = previousFields.skipReason;
+    }
+  }
+  delete fields.skip_reason;
+  delete fields.recommendedNull;
+
+  if (typeof fields.angle === "string") {
+    fields.angle = stripInternalWorkflowPhrases(fields.angle);
+  }
+
+  if (typeof fields.skipReason === "string") {
+    fields.skipReason = stripInternalWorkflowPhrases(fields.skipReason);
+  }
+
+  if (fields.recommended === false) {
+    fields.recommendedReason = null;
+  } else if (
+    fields.recommended === true &&
+    (typeof fields.recommendedReason !== "string" || fields.recommendedReason.trim().length === 0) &&
+    typeof previousFields.recommendedReason === "string"
+  ) {
+    fields.recommendedReason = previousFields.recommendedReason;
+  }
+
+  return fields;
+}
+
+function stripInternalWorkflowPhrases(value: string) {
+  return value
+    .replace(/user has chosen to generate despite poor fit\.?\s*/gi, "")
+    .replace(/user has chosen to proceed anyway\.?\s*/gi, "")
+    .replace(/user has chosen to generate anyway\.?\s*/gi, "")
+    .replace(/user requested generation despite poor fit\.?\s*/gi, "")
+    .replace(/user requested generation anyway\.?\s*/gi, "")
+    .replace(/user forced generation\.?\s*/gi, "")
+    .replace(/despite poor fit\.?\s*/gi, "")
+    .replace(/best possible angle:\s*/gi, "")
+    .trim();
+}
+
+function findPlatformContentByLooseKey(value: Record<string, unknown>, platform: PlatformKey) {
+  const matchingEntry = Object.entries(value).find(([key]) => normalizePlatformKey(key) === platform);
+  return matchingEntry?.[1] ?? null;
+}
+
+function normalizePlatformKey(platform: string): PlatformKey {
+  const normalized = platform.toLowerCase().replace(/[\s_-]/g, "");
+
+  if (
+    normalized === "rednote" ||
+    normalized === "xiaohongshu" ||
+    normalized === "xhs" ||
+    platform.includes("小红书") ||
+    normalized.includes("rednote") ||
+    normalized.includes("xiaohongshu")
+  ) {
+    return "rednote";
+  }
+
+  if (
+    normalized === "thread" ||
+    normalized === "threads" ||
+    normalized === "x" ||
+    normalized.includes("threads") ||
+    normalized.includes("twitter")
+  ) {
+    return "threads";
+  }
+
+  if (normalized === "linkedin" || normalized === "linkedinpost" || normalized.includes("linkedin")) {
+    return "linkedin";
+  }
+
+  return platform.toLowerCase() as PlatformKey;
+}
+
+function looksLikePlatformContent(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  const fields = value as Record<string, unknown>;
+  return (
+    "recommended" in fields &&
+    "angle" in fields &&
+    ("skipReason" in fields ||
+      "recommendedNull" in fields ||
+      "content" in fields ||
+      "caption" in fields ||
+      "titleOptions" in fields ||
+      "carouselSlides" in fields)
+  );
 }

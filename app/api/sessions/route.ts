@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import type { BriefState, PlatformKey, SessionSummary } from "@/components/types";
+import { defaultBrief, fallbackSessions } from "@/components/mock-data";
 
 type SessionRow = {
   id: string;
@@ -8,48 +9,68 @@ type SessionRow = {
   theme: string | null;
   raw_material: string | null;
   additional_context: string | null;
-  images: BriefState["images"] | null;
+  images?: BriefState["images"] | null;
   selected_platforms: PlatformKey[] | null;
 };
 
 export async function GET() {
-  const { data, error } = await supabaseAdmin
-    .from("sessions")
-    .select("id, created_at, updated_at, theme, raw_material, additional_context, images, selected_platforms")
-    .order("updated_at", { ascending: false, nullsFirst: false })
-    .limit(30);
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("sessions")
+      .select("id, created_at, updated_at, theme, raw_material, additional_context, selected_platforms")
+      .order("updated_at", { ascending: false, nullsFirst: false })
+      .limit(30)
+      .abortSignal(AbortSignal.timeout(10000));
 
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 });
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    return Response.json({
+      sessions: (data ?? []).map(rowToSession),
+    });
+  } catch {
+    return Response.json({
+      sessions: fallbackSessions,
+      error: "Saved history is unavailable because Supabase could not be reached. Showing local demo sessions.",
+    });
   }
-
-  return Response.json({
-    sessions: (data ?? []).map(rowToSession),
-  });
 }
 
 export async function POST() {
   const id = crypto.randomUUID();
-  const { data, error } = await supabaseAdmin
-    .from("sessions")
-    .insert({
-      id,
-      theme: "",
-      raw_material: "",
-      additional_context: "",
-      images: [],
-      selected_platforms: [],
-    })
-    .select("id, created_at, updated_at, theme, raw_material, additional_context, images, selected_platforms")
-    .single();
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("sessions")
+      .insert({
+        id,
+        theme: "",
+        raw_material: "",
+        additional_context: "",
+        images: [],
+        selected_platforms: [],
+      })
+      .select("id, created_at, updated_at, theme, raw_material, additional_context, images, selected_platforms")
+      .abortSignal(AbortSignal.timeout(10000))
+      .single();
 
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 });
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    return Response.json({
+      session: rowToSession(data),
+    });
+  } catch {
+    return Response.json({
+      session: {
+        id,
+        date: formatDate(new Date().toISOString()),
+        title: "Untitled brief",
+        brief: defaultBrief,
+      },
+    });
   }
-
-  return Response.json({
-    session: rowToSession(data),
-  });
 }
 
 function rowToSession(row: SessionRow): SessionSummary {

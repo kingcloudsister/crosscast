@@ -26,13 +26,15 @@ export function CreateView({
     onBriefChange({ ...brief, [key]: value });
   };
 
-  const handleImages = (files: FileList | null) => {
+  const handleImages = async (files: FileList | null) => {
     if (!files?.length) return;
-    const nextImages = Array.from(files).map((file) => ({
-      id: crypto.randomUUID(),
-      name: file.name,
-      url: URL.createObjectURL(file),
-    }));
+    const nextImages = await Promise.all(
+      Array.from(files).map(async (file) => ({
+        id: crypto.randomUUID(),
+        name: file.name,
+        url: await readFileAsDataUrl(file),
+      })),
+    );
     update("images", [...brief.images, ...nextImages]);
   };
 
@@ -40,7 +42,7 @@ export function CreateView({
     <section className="mx-auto w-full max-w-5xl px-6 py-8 lg:px-10">
       <div className="mb-7 flex flex-col gap-2">
         <h1 className="text-2xl font-semibold tracking-normal text-ink">Create New Content</h1>
-        <div className="h-px w-40 bg-line" />
+        <div className="h-1 w-40 rounded-full bg-gradient-to-r from-[#6842ff] via-[#ff4168] to-[#ffa51f]" />
       </div>
 
       <div className="space-y-6">
@@ -50,7 +52,7 @@ export function CreateView({
             value={brief.theme}
             onChange={(event) => update("theme", event.target.value)}
             placeholder='e.g. "How I use Claude to organize my morning tasks"'
-            className="h-12 w-full rounded-md border border-line bg-white px-4 text-[15px] text-ink outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-100"
+            className="h-12 w-full rounded-md border border-line bg-white px-4 text-[15px] text-ink outline-none transition focus:border-violet/50 focus:ring-4 focus:ring-violet/10"
           />
         </label>
 
@@ -62,9 +64,9 @@ export function CreateView({
               onChange={(event) => update("rawMaterial", event.target.value)}
               placeholder="Write or paste your notes, ideas, key points..."
               rows={8}
-              className="w-full rounded-md border border-line bg-white px-4 py-4 pr-40 text-[15px] leading-6 text-ink outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-100"
+              className="w-full rounded-md border border-line bg-white px-4 py-4 pr-40 text-[15px] leading-6 text-ink outline-none transition focus:border-violet/50 focus:ring-4 focus:ring-violet/10"
             />
-            <label className="absolute bottom-4 right-4 inline-flex h-10 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink shadow-sm transition hover:border-slate-400">
+            <label className="absolute bottom-4 right-4 inline-flex h-10 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink shadow-sm transition hover:border-violet/50 hover:text-violet">
               <ImageIcon className="h-4 w-4" />
               Add Images
               <input
@@ -96,7 +98,7 @@ export function CreateView({
                       brief.images.filter((item) => item.id !== image.id),
                     )
                   }
-                  className="rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-ink"
+                  className="rounded p-1 text-slate-500 hover:bg-coral/10 hover:text-coral"
                 >
                   <XIcon className="h-3.5 w-3.5" />
                 </button>
@@ -112,7 +114,7 @@ export function CreateView({
             onChange={(event) => update("additionalContext", event.target.value)}
             placeholder='e.g. "This is for my 小红书 AI tools series"'
             rows={3}
-            className="w-full rounded-md border border-line bg-white px-4 py-3 text-[15px] leading-6 text-ink outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-100"
+            className="w-full rounded-md border border-line bg-white px-4 py-3 text-[15px] leading-6 text-ink outline-none transition focus:border-violet/50 focus:ring-4 focus:ring-violet/10"
           />
         </label>
 
@@ -121,7 +123,7 @@ export function CreateView({
             type="button"
             onClick={onGenerate}
             disabled={isSaving}
-            className="inline-flex h-12 items-center justify-center gap-2 rounded-md bg-ink px-6 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex h-12 items-center justify-center gap-2 rounded-md bg-[#6842ff] px-6 text-sm font-semibold text-white shadow-[0_18px_44px_rgba(104,66,255,0.18)] transition hover:bg-ink disabled:cursor-not-allowed disabled:opacity-60"
           >
             <PlusIcon className="h-4 w-4 rotate-45" />
             {isSaving ? "Generating..." : "Generate"}
@@ -131,8 +133,8 @@ export function CreateView({
             onClick={onOpenAssistant}
             className={`inline-flex h-12 items-center justify-center rounded-md border px-6 text-sm font-semibold transition ${
               isAssistantOpen
-                ? "border-slate-400 bg-slate-100 text-ink"
-                : "border-line bg-white text-ink hover:border-slate-400"
+                ? "border-violet/40 bg-violet/10 text-violet"
+                : "border-line bg-white text-ink hover:border-violet/40 hover:text-violet"
             }`}
           >
             Help me develop this idea
@@ -147,4 +149,13 @@ export function CreateView({
       </div>
     </section>
   );
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.onerror = () => reject(reader.error ?? new Error(`Could not read ${file.name}.`));
+    reader.readAsDataURL(file);
+  });
 }

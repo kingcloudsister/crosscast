@@ -173,7 +173,7 @@ export function AssistantPanel({
           type="button"
           onClick={onClose}
           aria-label="Close assistant"
-          className="rounded-md p-2 text-slate-500 transition hover:bg-slate-100 hover:text-ink"
+          className="rounded-md p-2 text-slate-500 transition hover:bg-violet/10 hover:text-violet"
         >
           <XIcon className="h-4 w-4" />
         </button>
@@ -185,8 +185,8 @@ export function AssistantPanel({
             key={message.id}
             className={`whitespace-pre-wrap rounded-lg px-3 py-3 text-sm leading-6 ${
               message.role === "user"
-                ? "ml-8 rounded-tr-sm bg-ink text-white"
-                : "mr-8 rounded-tl-sm bg-slate-100 text-slate-800"
+                ? "ml-8 rounded-tr-sm bg-violet text-white shadow-brand"
+                : "mr-8 rounded-tl-sm bg-canvas text-slate-800"
             }`}
           >
             {message.content || "Thinking..."}
@@ -203,7 +203,7 @@ export function AssistantPanel({
         ) : null}
         <form
           onSubmit={handleSubmit}
-          className="mb-3 flex items-center gap-2 rounded-md border border-line bg-white px-3 py-2"
+          className="mb-3 flex items-center gap-2 rounded-md border border-line bg-white px-3 py-2 focus-within:border-violet/50 focus-within:ring-4 focus-within:ring-violet/10"
         >
           <input
             value={input}
@@ -216,7 +216,7 @@ export function AssistantPanel({
             type="submit"
             disabled={!input.trim() || isStreaming}
             aria-label="Send message"
-            className="rounded-md bg-ink p-2 text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-md bg-violet p-2 text-white transition hover:bg-ink disabled:cursor-not-allowed disabled:opacity-50"
           >
             <SendIcon className="h-4 w-4" />
           </button>
@@ -225,7 +225,7 @@ export function AssistantPanel({
           type="button"
           onClick={applySuggestion}
           disabled={isApplying}
-          className="h-10 w-full rounded-md border border-line bg-slate-50 text-sm font-semibold text-ink transition hover:border-slate-400 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+          className="h-10 w-full rounded-md border border-line bg-canvas text-sm font-semibold text-ink transition hover:border-violet/40 hover:bg-white hover:text-violet disabled:cursor-not-allowed disabled:opacity-60"
         >
           {isApplying ? "Applying..." : "Apply to Brief"}
         </button>
