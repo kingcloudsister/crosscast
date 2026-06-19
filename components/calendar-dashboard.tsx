@@ -37,6 +37,7 @@ export function CalendarView({ scheduledPosts, onCopyPost, onViewPost }: Calenda
         <div>
           <h1 className="text-2xl font-semibold text-ink">Content Calendar</h1>
           <p className="mt-2 text-sm text-muted">Scheduled posts across RedNote, Threads, and LinkedIn.</p>
+          <div className="mt-4 h-1 w-36 rounded-full bg-gradient-to-r from-violet via-teal to-amber" />
         </div>
         <div className="flex flex-wrap gap-3 text-xs font-semibold text-muted">
           {platformOrder.map((platform) => (
@@ -94,7 +95,7 @@ export function CalendarView({ scheduledPosts, onCopyPost, onViewPost }: Calenda
       <div className="mt-3 space-y-3">
         {upcomingPosts.length ? (
           upcomingPosts.map((post) => (
-            <div key={post.id} className="rounded-lg border border-line bg-white p-4">
+            <div key={post.id} className="rounded-lg border border-line bg-white p-4 shadow-[0_12px_28px_rgba(8,10,53,0.04)]">
               <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 text-sm font-semibold text-ink">
@@ -133,6 +134,7 @@ export function DashboardView({ scheduledPosts }: DashboardViewProps) {
     <section className="mx-auto w-full max-w-6xl px-6 py-8 lg:px-10">
       <h1 className="text-2xl font-semibold text-ink">Dashboard</h1>
       <p className="mt-2 text-sm text-muted">This month: {monthPosts.length} posts scheduled.</p>
+      <div className="mt-4 h-1 w-32 rounded-full bg-gradient-to-r from-violet via-coral to-amber" />
 
       <div className="mt-6 grid gap-3 sm:grid-cols-3">
         {platformOrder.map((platform) => {
@@ -156,7 +158,7 @@ export function DashboardView({ scheduledPosts }: DashboardViewProps) {
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[680px] text-left text-sm">
-            <thead className="border-b border-line bg-slate-50 text-xs uppercase text-muted">
+            <thead className="border-b border-line bg-canvas text-xs uppercase text-muted">
               <tr>
                 <th className="px-5 py-3 font-semibold">Title</th>
                 <th className="px-5 py-3 font-semibold">Platform</th>
@@ -207,7 +209,7 @@ function SmallButton({
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold text-ink transition hover:border-slate-400"
+      className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold text-ink transition hover:border-violet/40 hover:text-violet"
     >
       {icon}
       {label}
@@ -221,7 +223,7 @@ function IconButton({ label, children, onClick }: { label: string; children: Rea
       type="button"
       onClick={onClick}
       aria-label={label}
-      className="flex h-9 w-9 items-center justify-center rounded-md border border-line text-xl font-semibold text-ink transition hover:border-slate-400"
+      className="flex h-9 w-9 items-center justify-center rounded-md border border-line text-xl font-semibold text-ink transition hover:border-violet/40 hover:text-violet"
     >
       {children}
     </button>

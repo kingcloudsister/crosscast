@@ -21,7 +21,10 @@ type EditorViewProps = {
 };
 
 const platformOrder: PlatformKey[] = ["rednote", "threads", "linkedin"];
-const generateAnywayFeedback = "user wants to generate despite poor fit — find the best possible angle";
+const generateAnywayFeedback =
+  "Create the strongest native post for this platform. Do not mention that this platform was previously not recommended, that the user forced generation, or that this is a poor fit.";
+const defaultRegenerationFeedback =
+  "Regenerate this platform draft as a fresh version using the same brief and platform strategy. Keep the platform fit decision and JSON structure, but rewrite the actual post content instead of lightly editing the previous draft.";
 
 export function EditorView({
   generation,
@@ -36,7 +39,7 @@ export function EditorView({
   const notRecommendedPlatforms = platformsWithContent.filter((platform) => !generation.platforms[platform]?.recommended);
 
   return (
-    <section className="mx-auto w-full max-w-6xl px-6 py-7 lg:px-10">
+    <section className="mx-auto w-full max-w-[1600px] px-6 py-7 lg:px-8">
       <button
         type="button"
         onClick={onBack}
@@ -50,71 +53,49 @@ export function EditorView({
         <p className="text-sm font-medium text-muted">Content Type</p>
         <h1 className="mt-1 text-2xl font-semibold text-ink">{generation.contentAnalysis.contentType}</h1>
         <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-700">{generation.contentAnalysis.summary}</p>
+        <div className="mt-4 h-1 w-44 rounded-full bg-gradient-to-r from-violet via-coral to-amber" />
       </div>
 
-      <div className="space-y-8">
-        <section>
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold text-ink">Recommended Platforms</h2>
-            <span className="text-sm font-medium text-muted">{recommendedPlatforms.length} ready to review</span>
+      <section>
+        <div className="mb-3 flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
+          <div>
+            <h2 className="text-lg font-semibold text-ink">Platform Comparison</h2>
+            <p className="mt-1 text-sm text-muted">Review RedNote, Threads, and LinkedIn side by side.</p>
           </div>
-          <div className="space-y-4">
-            {recommendedPlatforms.length ? (
-              recommendedPlatforms.map((platform) => {
-                const content = generation.platforms[platform];
-                if (!content) return null;
-                return (
-                  <RecommendedPlatformCard
-                    key={platform}
-                    platform={platform}
-                    content={content}
-                    status={statuses[platform]}
-                    onSavePlatform={onSavePlatform}
-                    onRegeneratePlatform={onRegeneratePlatform}
-                    onApprove={onApprove}
-                  />
-                );
-              })
-            ) : (
-              <div className="rounded-lg border border-dashed border-line bg-white p-5 text-sm text-muted">
-                No platforms were recommended for this brief yet.
-              </div>
-            )}
-          </div>
-        </section>
+          <span className="text-sm font-medium text-muted">
+            {recommendedPlatforms.length} recommended · {notRecommendedPlatforms.length} alternative
+          </span>
+        </div>
 
-        <section>
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold text-ink">Not Recommended</h2>
-            <span className="text-sm font-medium text-muted">{notRecommendedPlatforms.length} poor fit</span>
+        {platformsWithContent.length ? (
+          <div className="grid gap-4 xl:grid-cols-3">
+            {platformsWithContent.map((platform) => {
+              const content = generation.platforms[platform];
+              if (!content) return null;
+              return (
+                <PlatformReviewCard
+                  key={platform}
+                  platform={platform}
+                  content={content}
+                  status={statuses[platform]}
+                  onSavePlatform={onSavePlatform}
+                  onRegeneratePlatform={onRegeneratePlatform}
+                  onApprove={onApprove}
+                />
+              );
+            })}
           </div>
-          <div className="space-y-3">
-            {notRecommendedPlatforms.length ? (
-              notRecommendedPlatforms.map((platform) => {
-                const content = generation.platforms[platform];
-                if (!content) return null;
-                return (
-                  <NotRecommendedPlatformCard
-                    key={platform}
-                    platform={platform}
-                    content={content}
-                    onRegeneratePlatform={onRegeneratePlatform}
-                  />
-                );
-              })
-            ) : (
-              <div className="rounded-lg border border-dashed border-line bg-white p-5 text-sm text-muted">
-                Every platform is currently recommended.
-              </div>
-            )}
+        ) : (
+          <div className="rounded-lg border border-dashed border-line bg-white p-5 text-sm text-muted">
+            No platform drafts were generated for this brief yet.
           </div>
-        </section>
-      </div>
+        )}
+      </section>
     </section>
   );
 }
 
-function RecommendedPlatformCard({
+function PlatformReviewCard({
   platform,
   content,
   status,
@@ -136,10 +117,9 @@ function RecommendedPlatformCard({
   const [expandedSlide, setExpandedSlide] = useState<number>(1);
   const [isEditing, setIsEditing] = useState(false);
   const [draftContent, setDraftContent] = useState<PlatformContent | null>(null);
-  const [isRegenerating, setIsRegenerating] = useState(false);
-  const [feedback, setFeedback] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isRegeneratingPlatform, setIsRegeneratingPlatform] = useState(false);
+  const [isGeneratingAnyway, setIsGeneratingAnyway] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
   const [shouldSchedule, setShouldSchedule] = useState(false);
   const [scheduleDateTime, setScheduleDateTime] = useState(() => defaultScheduleDateTime());
@@ -147,12 +127,12 @@ function RecommendedPlatformCard({
 
   const displayedContent = (isEditing && draftContent ? draftContent : content) as PlatformContent;
   const meta = platformMeta[platform];
+  const isRecommended = displayedContent.recommended;
 
   useEffect(() => {
     setIsEditing(false);
     setDraftContent(null);
-    setIsRegenerating(false);
-    setFeedback("");
+    setIsGeneratingAnyway(false);
     setShouldSchedule(false);
     setScheduleDateTime(defaultScheduleDateTime());
     setError(null);
@@ -162,7 +142,13 @@ function RecommendedPlatformCard({
 
   const handleCopy = async () => {
     if (!copyText) return;
-    await navigator.clipboard?.writeText(copyText);
+    setError(null);
+
+    try {
+      await copyToClipboard(copyText);
+    } catch {
+      setError(null);
+    }
   };
 
   const startEditing = () => {
@@ -193,23 +179,29 @@ function RecommendedPlatformCard({
     }
   };
 
-  const submitRegeneration = async () => {
-    if (!feedback.trim()) {
-      setError("Add feedback before regenerating.");
-      return;
-    }
-
+  const regeneratePlatformDraft = async () => {
     setIsRegeneratingPlatform(true);
     setError(null);
     try {
-      await onRegeneratePlatform(platform, feedback.trim());
-      setFeedback("");
-      setIsRegenerating(false);
+      await onRegeneratePlatform(platform, defaultRegenerationFeedback);
     } catch (caughtError) {
       const message = caughtError instanceof Error ? caughtError.message : "Could not regenerate content.";
       setError(message);
     } finally {
       setIsRegeneratingPlatform(false);
+    }
+  };
+
+  const generateAnyway = async () => {
+    setIsGeneratingAnyway(true);
+    setError(null);
+    try {
+      await onRegeneratePlatform(platform, generateAnywayFeedback, { forceRecommended: true });
+    } catch (caughtError) {
+      const message = caughtError instanceof Error ? caughtError.message : "Could not generate this platform.";
+      setError(message);
+    } finally {
+      setIsGeneratingAnyway(false);
     }
   };
 
@@ -234,183 +226,130 @@ function RecommendedPlatformCard({
   };
 
   return (
-    <div className="rounded-lg border border-line bg-white p-5 shadow-workspace">
-      <div className="mb-5 flex flex-col justify-between gap-3 border-b border-line pb-4 sm:flex-row sm:items-start">
+    <div className="flex max-h-none min-h-[38rem] flex-col rounded-lg border border-line bg-white shadow-workspace xl:max-h-[calc(100vh-15rem)]">
+      <div className="flex shrink-0 flex-col justify-between gap-3 border-b border-line p-4 sm:flex-row sm:items-start">
         <div>
           <div className="flex items-center gap-2">
             <span className={`h-2.5 w-2.5 rounded-full ${meta.dot}`} />
             <h3 className="text-lg font-semibold text-ink">{meta.label}</h3>
           </div>
-          <p className="mt-2 text-sm text-muted">Angle: {displayedContent.angle}</p>
         </div>
-        <span className="w-fit rounded-md border border-line bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700">
-          {statusLabel(status)}
-        </span>
-      </div>
-
-      {platform === "rednote" ? (
-        <RedNotePanel
-          content={displayedContent as RedNoteContent}
-          expandedSlide={expandedSlide}
-          isEditing={isEditing}
-          onExpandSlide={setExpandedSlide}
-          onChange={setDraftContent}
-        />
-      ) : (
-        <TextPlatformPanel
-          content={displayedContent as TextPlatformContent}
-          isEditing={isEditing}
-          platform={platform}
-          onChange={setDraftContent}
-        />
-      )}
-
-      {isRegenerating ? (
-        <div className="mt-5 rounded-md border border-line bg-slate-50 p-3">
-          <label className="block text-sm font-medium text-ink">What should change?</label>
-          <textarea
-            value={feedback}
-            onChange={(event) => setFeedback(event.target.value)}
-            rows={3}
-            placeholder="e.g. Make this more strategic and less tutorial-like."
-            className="mt-2 w-full rounded-md border border-line bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 focus:ring-4 focus:ring-slate-100"
-          />
-          <div className="mt-3 flex gap-2">
-            <ActionButton
-              label={isRegeneratingPlatform ? "Regenerating..." : "Send Feedback"}
-              onClick={submitRegeneration}
-              disabled={isRegeneratingPlatform}
-              strong
-            />
-            <ActionButton
-              label="Cancel"
-              onClick={() => {
-                setIsRegenerating(false);
-                setFeedback("");
-                setError(null);
-              }}
-              disabled={isRegeneratingPlatform}
-            />
-          </div>
-        </div>
-      ) : null}
-
-      {error ? (
-        <p className="mt-5 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-          {error}
-        </p>
-      ) : null}
-
-      <div className="mt-6 flex flex-wrap gap-2">
-        <ActionButton icon={<CopyIcon className="h-4 w-4" />} label="Copy" onClick={handleCopy} />
-        {isEditing ? (
-          <>
-            <ActionButton label={isSaving ? "Saving..." : "Save"} onClick={saveEditing} disabled={isSaving} strong />
-            <ActionButton label="Cancel" onClick={cancelEditing} disabled={isSaving} />
-          </>
-        ) : (
-          <ActionButton icon={<EditIcon className="h-4 w-4" />} label="Edit" onClick={startEditing} />
-        )}
-        <ActionButton
-          icon={<RefreshIcon className="h-4 w-4" />}
-          label="Regenerate"
-          onClick={() => {
-            setIsRegenerating((value) => !value);
-            setError(null);
-          }}
-          disabled={isRegeneratingPlatform}
-        />
-        <ActionButton
-          icon={<CheckIcon className="h-4 w-4" />}
-          label={isApproving ? "Approving..." : status === "approved" ? "Approved" : shouldSchedule ? "Approve + Schedule" : "Approve"}
-          onClick={approvePost}
-          disabled={isApproving}
-          strong
-        />
-      </div>
-
-      <div className="mt-4 rounded-md border border-line bg-slate-50 p-3">
-        <label className="flex items-start gap-3 text-sm text-ink">
-          <input
-            type="checkbox"
-            checked={shouldSchedule}
-            onChange={(event) => setShouldSchedule(event.target.checked)}
-            className="mt-1 h-4 w-4 rounded border-line text-ink"
-          />
-          <span>
-            <span className="block font-semibold">Schedule this post</span>
-            <span className="mt-1 block text-muted">Pick a date and time when approving to add it to the calendar.</span>
+        <div className="flex flex-wrap gap-2">
+          <span className="w-fit rounded-md border border-line bg-canvas px-2.5 py-1 text-xs font-semibold text-slate-700">
+            {statusLabel(status)}
           </span>
-        </label>
-        {shouldSchedule ? (
-          <label className="mt-3 block text-sm font-semibold text-ink">
-            Date and time
-            <input
-              type="datetime-local"
-              value={scheduleDateTime}
-              onChange={(event) => setScheduleDateTime(event.target.value)}
-              className="mt-2 block h-10 w-full rounded-md border border-line bg-white px-3 text-sm font-medium text-ink outline-none focus:border-slate-400 focus:ring-4 focus:ring-slate-100 sm:w-72"
+          {!isRecommended ? (
+            <button
+              type="button"
+              onClick={generateAnyway}
+              disabled={isGeneratingAnyway}
+              className={`inline-flex h-8 shrink-0 items-center justify-center rounded-md border px-2.5 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${meta.borderClass} ${meta.colorClass} bg-white`}
+            >
+              {isGeneratingAnyway ? "Generating..." : "Generate anyway"}
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        {!isRecommended && displayedContent.skipReason ? (
+          <div className="mb-4 rounded-md border border-amber/30 bg-amber/10 px-3 py-2 text-sm leading-6 text-ink">
+            {cleanInternalWorkflowPhrases(displayedContent.skipReason)}
+          </div>
+        ) : null}
+        {isRecommended && displayedContent.recommendedReason ? (
+          <div className="mb-4 rounded-md border border-teal/25 bg-teal/10 px-3 py-2 text-sm leading-6 text-ink">
+            <span className="block text-xs font-semibold uppercase text-teal">Why recommended</span>
+            <span className="mt-1 block">{displayedContent.recommendedReason}</span>
+          </div>
+        ) : null}
+
+        {isRecommended ? (
+          platform === "rednote" ? (
+            <RedNotePanel
+              content={displayedContent as RedNoteContent}
+              expandedSlide={expandedSlide}
+              isEditing={isEditing}
+              onExpandSlide={setExpandedSlide}
+              onChange={setDraftContent}
             />
-          </label>
+          ) : (
+            <TextPlatformPanel
+              content={displayedContent as TextPlatformContent}
+              isEditing={isEditing}
+              platform={platform}
+              onChange={setDraftContent}
+            />
+          )
+        ) : (
+          <div className="rounded-md border border-dashed border-line bg-canvas px-3 py-4 text-sm leading-6 text-muted">
+            No draft was generated for this platform because it is not recommended for this brief. Use Generate anyway to
+            create a post for this platform.
+          </div>
+        )}
+
+        {error ? (
+          <p className="mt-5 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+            {error}
+          </p>
         ) : null}
       </div>
-    </div>
-  );
-}
 
-function NotRecommendedPlatformCard({
-  platform,
-  content,
-  onRegeneratePlatform,
-}: {
-  platform: PlatformKey;
-  content: PlatformContent;
-  onRegeneratePlatform: (
-    platform: PlatformKey,
-    feedback: string,
-    options?: { forceRecommended?: boolean },
-  ) => Promise<void>;
-}) {
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const meta = platformMeta[platform];
-
-  const generateAnyway = async () => {
-    setIsGenerating(true);
-    setError(null);
-    try {
-      await onRegeneratePlatform(platform, generateAnywayFeedback, { forceRecommended: true });
-    } catch (caughtError) {
-      const message = caughtError instanceof Error ? caughtError.message : "Could not generate this platform.";
-      setError(message);
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
-  return (
-    <div className="rounded-lg border border-line bg-white p-4">
-      <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${meta.dot}`} />
-            <h3 className="text-base font-semibold text-ink">{meta.label}</h3>
-          </div>
-          <p className="mt-2 text-sm leading-6 text-muted">{content.skipReason || "The AI marked this platform as a poor fit."}</p>
+      {isRecommended ? (
+        <div className="flex shrink-0 flex-wrap gap-2 border-t border-line p-4">
+          <ActionButton icon={<CopyIcon className="h-4 w-4" />} label="Copy" onClick={handleCopy} />
+          {isEditing ? (
+            <>
+              <ActionButton label={isSaving ? "Saving..." : "Save"} onClick={saveEditing} disabled={isSaving} strong />
+              <ActionButton label="Cancel" onClick={cancelEditing} disabled={isSaving} />
+            </>
+          ) : (
+            <ActionButton icon={<EditIcon className="h-4 w-4" />} label="Edit" onClick={startEditing} />
+          )}
+          <ActionButton
+            icon={<RefreshIcon className="h-4 w-4" />}
+            label={isRegeneratingPlatform ? "Regenerating..." : "Regenerate"}
+            onClick={regeneratePlatformDraft}
+            disabled={isRegeneratingPlatform}
+          />
+          <ActionButton
+            icon={<CheckIcon className="h-4 w-4" />}
+            label={
+              isApproving ? "Approving..." : status === "approved" ? "Approved" : shouldSchedule ? "Approve + Schedule" : "Approve"
+            }
+            onClick={approvePost}
+            disabled={isApproving}
+            strong
+          />
         </div>
-        <button
-          type="button"
-          onClick={generateAnyway}
-          disabled={isGenerating}
-          className={`inline-flex h-10 shrink-0 items-center justify-center rounded-md border px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${meta.borderClass} ${meta.colorClass} bg-white`}
-        >
-          {isGenerating ? "Generating..." : "Generate anyway"}
-        </button>
-      </div>
-      {error ? (
-        <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-          {error}
-        </p>
+      ) : null}
+
+      {isRecommended ? (
+        <div className="mx-4 mb-4 shrink-0 rounded-md border border-line bg-canvas p-3">
+          <label className="flex items-start gap-3 text-sm text-ink">
+            <input
+              type="checkbox"
+              checked={shouldSchedule}
+              onChange={(event) => setShouldSchedule(event.target.checked)}
+              className="mt-1 h-4 w-4 rounded border-line text-ink"
+            />
+            <span>
+              <span className="block font-semibold">Schedule this post</span>
+              <span className="mt-1 block text-muted">Pick a date and time when approving to add it to the calendar.</span>
+            </span>
+          </label>
+          {shouldSchedule ? (
+            <label className="mt-3 block text-sm font-semibold text-ink">
+              Date and time
+              <input
+                type="datetime-local"
+                value={scheduleDateTime}
+                onChange={(event) => setScheduleDateTime(event.target.value)}
+                className="mt-2 block h-10 w-full rounded-md border border-line bg-white px-3 text-sm font-medium text-ink outline-none focus:border-violet/50 focus:ring-4 focus:ring-violet/10 sm:w-72"
+              />
+            </label>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );
@@ -430,15 +369,16 @@ function RedNotePanel({
   onChange: (content: RedNoteContent) => void;
 }) {
   const activeSlide = content.carouselSlides.find((slide) => slide.slideNumber === expandedSlide);
+  const displayedAngle = cleanInternalWorkflowPhrases(content.angle);
 
   return (
     <div className="space-y-5">
       <EditableBlock
         label="Angle"
-        value={content.angle}
+        value={displayedAngle}
         rows={2}
         isEditing={isEditing}
-        onChange={(value) => onChange({ ...content, angle: value })}
+        onChange={(value) => onChange({ ...content, angle: cleanInternalWorkflowPhrases(value) })}
       />
       <EditableBlock
         label="Title"
@@ -465,8 +405,8 @@ function RedNotePanel({
               onClick={() => onExpandSlide(slide.slideNumber)}
               className={`flex h-16 w-16 items-center justify-center rounded-md border text-sm font-semibold transition ${
                 expandedSlide === slide.slideNumber
-                  ? "border-rednote bg-rose-50 text-rednote ring-4 ring-rose-100"
-                  : "border-line bg-white text-slate-700 hover:border-slate-400"
+                  ? "border-rednote bg-coral/10 text-rednote ring-4 ring-coral/15"
+                  : "border-line bg-white text-slate-700 hover:border-violet/40 hover:text-violet"
               }`}
             >
               {slide.slideNumber}
@@ -474,7 +414,7 @@ function RedNotePanel({
           ))}
         </div>
         {activeSlide ? (
-          <div className="mt-3 rounded-md border border-line bg-slate-50 p-4">
+          <div className="mt-3 rounded-md border border-line bg-canvas p-4">
             {isEditing ? (
               <div className="space-y-3">
                 <EditableBlock
@@ -545,14 +485,16 @@ function TextPlatformPanel({
   platform: PlatformKey;
   onChange: (content: TextPlatformContent) => void;
 }) {
+  const displayedAngle = cleanInternalWorkflowPhrases(content.angle);
+
   return (
     <div className="space-y-5">
       <EditableBlock
         label="Angle"
-        value={content.angle}
+        value={displayedAngle}
         rows={2}
         isEditing={isEditing}
-        onChange={(value) => onChange({ ...content, angle: value })}
+        onChange={(value) => onChange({ ...content, angle: cleanInternalWorkflowPhrases(value) })}
       />
       <EditableBlock
         label="Post Text"
@@ -581,6 +523,19 @@ function TextPlatformPanel({
   );
 }
 
+function cleanInternalWorkflowPhrases(value: string) {
+  return value
+    .replace(/user has chosen to generate despite poor fit\.?\s*/gi, "")
+    .replace(/user has chosen to proceed anyway\.?\s*/gi, "")
+    .replace(/user has chosen to generate anyway\.?\s*/gi, "")
+    .replace(/user requested generation despite poor fit\.?\s*/gi, "")
+    .replace(/user requested generation anyway\.?\s*/gi, "")
+    .replace(/user forced generation\.?\s*/gi, "")
+    .replace(/despite poor fit\.?\s*/gi, "")
+    .replace(/best possible angle:\s*/gi, "")
+    .trim();
+}
+
 function EditableBlock({
   label,
   value,
@@ -602,7 +557,7 @@ function EditableBlock({
           value={value}
           onChange={(event) => onChange?.(event.target.value)}
           rows={rows}
-          className="w-full rounded-md border border-line bg-white px-3 py-2 text-sm leading-6 text-ink outline-none focus:border-slate-400 focus:ring-4 focus:ring-slate-100"
+          className="w-full rounded-md border border-line bg-white px-3 py-2 text-sm leading-6 text-ink outline-none focus:border-violet/50 focus:ring-4 focus:ring-violet/10"
         />
       ) : (
         <div className="whitespace-pre-wrap rounded-md border border-line bg-white px-3 py-2 text-sm leading-6 text-ink">
@@ -633,8 +588,8 @@ function ActionButton({
       disabled={disabled}
       className={`inline-flex h-10 items-center gap-2 rounded-md px-3 text-sm font-semibold transition ${
         strong
-          ? "bg-ink text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-          : "border border-line bg-white text-ink hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-60"
+          ? "bg-violet text-white shadow-brand hover:bg-ink disabled:cursor-not-allowed disabled:opacity-60"
+          : "border border-line bg-white text-ink hover:border-violet/40 hover:text-violet disabled:cursor-not-allowed disabled:opacity-60"
       }`}
     >
       {icon}
@@ -653,6 +608,36 @@ function getPlatformCopy(platform: PlatformKey, content: PlatformContent) {
   }
 
   return "";
+}
+
+async function copyToClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall back for embedded browsers where Clipboard API exists but rejects
+      // because the document is not focused.
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.focus({ preventScroll: true });
+  textarea.select();
+
+  try {
+    if (!document.execCommand("copy")) {
+      throw new Error("Copy failed. Select the post text and copy it manually.");
+    }
+  } finally {
+    document.body.removeChild(textarea);
+  }
 }
 
 function cloneContent<T extends PlatformContent>(content: T): T {

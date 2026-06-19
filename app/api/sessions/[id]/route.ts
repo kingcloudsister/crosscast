@@ -8,6 +8,7 @@ import type {
   TextPlatformContent,
 } from "@/components/types";
 import { isPlatformKey } from "@/lib/platforms";
+import { fallbackSessions, sampleGeneration } from "@/components/mock-data";
 
 type RouteContext = {
   params: Promise<{
@@ -35,30 +36,40 @@ type GenerationRow = {
 
 export async function GET(_request: Request, context: RouteContext) {
   const { id } = await context.params;
-  const [sessionResult, generationsResult] = await Promise.all([
-    supabaseAdmin
-      .from("sessions")
-      .select("id, created_at, updated_at, theme, raw_material, additional_context, images, selected_platforms")
-      .eq("id", id)
-      .single(),
-    supabaseAdmin
-      .from("generations")
-      .select("id, platform, status, content")
-      .eq("session_id", id)
-      .order("created_at", { ascending: true }),
-  ]);
+  const fallback = getFallbackSessionDetail(id);
 
-  if (sessionResult.error) {
-    return Response.json({ error: sessionResult.error.message }, { status: 404 });
+  if (fallback) {
+    return Response.json({ session: fallback });
   }
 
-  if (generationsResult.error) {
-    return Response.json({ error: generationsResult.error.message }, { status: 500 });
-  }
+  try {
+    const [sessionResult, generationsResult] = await Promise.all([
+      supabaseAdmin
+        .from("sessions")
+        .select("id, created_at, updated_at, theme, raw_material, additional_context, images, selected_platforms")
+        .eq("id", id)
+        .single(),
+      supabaseAdmin
+        .from("generations")
+        .select("id, platform, status, content")
+        .eq("session_id", id)
+        .order("created_at", { ascending: true }),
+    ]);
 
-  return Response.json({
-    session: rowToSessionDetail(sessionResult.data, generationsResult.data ?? []),
-  });
+    if (sessionResult.error) {
+      return Response.json({ error: sessionResult.error.message }, { status: 404 });
+    }
+
+    if (generationsResult.error) {
+      throw new Error(generationsResult.error.message);
+    }
+
+    return Response.json({
+      session: rowToSessionDetail(sessionResult.data, generationsResult.data ?? []),
+    });
+  } catch {
+    return Response.json({ error: "Could not load session." }, { status: 500 });
+  }
 }
 
 function rowToSessionDetail(row: SessionRow, generations: GenerationRow[]): SessionDetail {
@@ -113,4 +124,20 @@ function formatDate(value: string) {
     month: "short",
     day: "numeric",
   }).format(new Date(value));
+}
+
+function getFallbackSessionDetail(id: string): SessionDetail | null {
+  const session = fallbackSessions.find((item) => item.id === id);
+
+  if (!session) {
+    return null;
+  }
+
+  return {
+    id: session.id,
+    date: session.date,
+    title: session.title,
+    brief: session.brief,
+    generation: session.id === "may-27-claude" ? sampleGeneration : null,
+  };
 }

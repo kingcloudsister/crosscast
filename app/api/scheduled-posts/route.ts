@@ -7,6 +7,7 @@ import type {
   ScheduledPostStatus,
   TextPlatformContent,
 } from "@/components/types";
+import { fallbackScheduledPosts } from "@/components/mock-data";
 
 type ScheduledPostRow = {
   id: string;
@@ -29,20 +30,29 @@ type CreateScheduledPostRequest = {
 };
 
 export async function GET() {
-  const { data, error } = await supabaseAdmin
-    .from("scheduled_posts")
-    .select("id, generation_id, scheduled_for, status")
-    .order("scheduled_for", { ascending: true });
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("scheduled_posts")
+      .select("id, generation_id, scheduled_for, status")
+      .order("scheduled_for", { ascending: true })
+      .abortSignal(AbortSignal.timeout(10000));
 
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 });
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    const generations = await loadGenerations(data ?? []);
+
+    return Response.json({
+      scheduledPosts: (data ?? [])
+        .map((row) => rowToScheduledPost(row, generations.get(row.generation_id ?? "")))
+        .filter(Boolean),
+    });
+  } catch {
+    return Response.json({
+      scheduledPosts: fallbackScheduledPosts,
+    });
   }
-
-  const generations = await loadGenerations(data ?? []);
-
-  return Response.json({
-    scheduledPosts: (data ?? []).map((row) => rowToScheduledPost(row, generations.get(row.generation_id ?? ""))).filter(Boolean),
-  });
 }
 
 export async function POST(request: Request) {

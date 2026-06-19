@@ -55,7 +55,7 @@ Career exploration and personal growth stories can work cross-platform with diff
 
 Kelly Ong, born 2002, Singaporean-Chinese. 北大元培中文系 graduate. Cofounded CoChat咖聊 (mentorship platform). Previously BD at AI security company. Now Asia Ops Lead & GTM at Rentmigo (UK proptech startup, China expansion). Her edge: genuine cross-cultural fluency, real startup experience on both sides, uses AI tools daily in actual work so tutorials come from real workflows.
 
-IMPORTANT: Respond ONLY via the provided structured output tool.`;
+IMPORTANT: Respond ONLY with the JSON object. No markdown backticks, no preamble, no explanation outside the JSON. Escape every double quote inside string values as \\" so the response is valid JSON.`;
 
 export const generationToolName = "emit_crosscast_generation";
 
@@ -118,7 +118,7 @@ export const generationToolSchema = {
 export function validateGeneration(value: unknown): GeneratedContent {
   const parsed = value as GeneratedContent;
   if (!parsed.contentAnalysis || !parsed.platforms) {
-    throw new Error("Claude response did not match the expected generation structure.");
+    throw new Error("OpenRouter response did not match the expected generation structure.");
   }
 
   return parsed;

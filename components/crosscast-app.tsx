@@ -45,12 +45,13 @@ export function CrosscastApp() {
         }
 
         setSessions(data.sessions);
-        setDbNotice(null);
+        mergeLocalHistory(data.sessions);
+        setDbNotice(data.error ?? null);
       } catch (error) {
         if (!isMounted) return;
         const message = error instanceof Error ? error.message : "Could not load sessions.";
         setDbNotice(message);
-        setSessions(fallbackSessions);
+        setSessions(getLocalSessionSummaries());
         return;
       }
     }
@@ -134,6 +135,10 @@ export function CrosscastApp() {
       setSessions((items) => [nextSession, ...items.filter((item) => item.id !== data.sessionId)]);
       setGeneration(data.generation);
       setStatuses(buildStatuses(data.generation));
+      saveLocalSession({
+        ...nextSession,
+        generation: data.generation,
+      });
       setView("editor");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Generation failed.";
@@ -182,6 +187,7 @@ export function CrosscastApp() {
 
       setBrief(data.session.brief);
       setCurrentSessionId(data.session.id);
+      saveLocalSession(data.session);
 
       if (data.session.generation) {
         setGeneration(data.session.generation);
@@ -194,6 +200,24 @@ export function CrosscastApp() {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not load session.";
+      const cachedSession = getLocalSessionDetail(session.id);
+
+      if (cachedSession) {
+        setBrief(cachedSession.brief);
+        setCurrentSessionId(cachedSession.id);
+        setGeneration(cachedSession.generation ?? sampleGeneration);
+        setStatuses(cachedSession.generation ? buildStatuses(cachedSession.generation) : initialStatuses);
+        setView(cachedSession.generation ? "editor" : "create");
+        setDbNotice(message);
+        return;
+      }
+
+      const hasFallbackGeneration = session.id === "may-27-claude";
+      setBrief(session.brief);
+      setCurrentSessionId(session.id.startsWith("may-") ? null : session.id);
+      setGeneration(sampleGeneration);
+      setStatuses(hasFallbackGeneration ? buildStatuses(sampleGeneration) : initialStatuses);
+      setView(hasFallbackGeneration ? "editor" : "create");
       setDbNotice(message);
     }
   };
@@ -403,23 +427,22 @@ export function CrosscastApp() {
 
   return (
     <div className="min-h-screen bg-canvas text-ink">
-      <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-line bg-white px-4 sm:px-6">
+      <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-line bg-white/92 px-4 shadow-[0_8px_28px_rgba(8,10,53,0.04)] backdrop-blur sm:px-6">
         <button
           type="button"
           onClick={() => setView("create")}
-          className="flex items-center gap-2 text-lg font-semibold tracking-normal text-ink"
+          className="flex h-11 items-center rounded-md outline-none transition focus:ring-4 focus:ring-violet/15"
         >
-          <span className="text-xl">✦</span>
-          Crosscast
+          <img src="/crosscast-logo.png" alt="Crosscast" className="h-9 w-auto object-contain" />
         </button>
-        <nav className="flex items-center gap-1 rounded-md border border-line bg-slate-50 p-1">
+        <nav className="flex items-center gap-1 rounded-md border border-line bg-canvas/80 p-1 shadow-sm">
           {(["create", "calendar", "dashboard"] as ViewKey[]).map((item) => (
             <button
               key={item}
               type="button"
               onClick={() => setView(item)}
               className={`h-9 rounded px-3 text-sm font-semibold capitalize transition ${
-                view === item ? "bg-white text-ink shadow-sm" : "text-slate-600 hover:text-ink"
+                view === item ? "bg-white text-violet shadow-sm" : "text-muted hover:bg-white/70 hover:text-ink"
               }`}
             >
               {item}
@@ -429,7 +452,12 @@ export function CrosscastApp() {
       </header>
 
       <div className="flex min-h-[calc(100vh-4rem)]">
-        <HistorySidebar sessions={sessions} onLoadSession={handleLoadSession} onNewSession={handleNewSession} />
+        <HistorySidebar
+          sessions={sessions}
+          notice={dbNotice}
+          onLoadSession={handleLoadSession}
+          onNewSession={handleNewSession}
+        />
 
         <main className="min-w-0 flex-1">
           <div className="flex min-h-[calc(100vh-4rem)]">
@@ -481,10 +509,12 @@ export function CrosscastApp() {
 
 function HistorySidebar({
   sessions,
+  notice,
   onLoadSession,
   onNewSession,
 }: {
   sessions: SessionSummary[];
+  notice: string | null;
   onLoadSession: (session: SessionSummary) => void;
   onNewSession: () => void;
 }) {
@@ -494,18 +524,24 @@ function HistorySidebar({
   }, {});
 
   return (
-    <aside className="hidden w-64 shrink-0 border-r border-line bg-white p-4 md:block">
+    <aside className="hidden w-64 shrink-0 border-r border-line bg-white/82 p-4 backdrop-blur md:block">
       <div className="mb-5 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-ink">History</h2>
         <button
           type="button"
           onClick={onNewSession}
           aria-label="New session"
-          className="rounded-md border border-line p-2 text-slate-600 transition hover:border-slate-400 hover:text-ink"
+          className="rounded-md border border-line p-2 text-muted transition hover:border-violet/40 hover:bg-violet/5 hover:text-violet"
         >
           <PlusIcon className="h-4 w-4" />
         </button>
       </div>
+
+      {notice ? (
+        <p className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+          {notice}
+        </p>
+      ) : null}
 
       <div className="space-y-5">
         {Object.entries(grouped).map(([date, items]) => (
@@ -517,7 +553,7 @@ function HistorySidebar({
                   key={session.id}
                   type="button"
                   onClick={() => onLoadSession(session)}
-                  className="w-full rounded-md px-2 py-2 text-left text-sm leading-5 text-slate-700 transition hover:bg-slate-50 hover:text-ink"
+                  className="w-full rounded-md px-2 py-2 text-left text-sm leading-5 text-slate-700 transition hover:bg-violet/5 hover:text-ink"
                 >
                   <span className="block truncate">{session.title}</span>
                 </button>
@@ -530,13 +566,89 @@ function HistorySidebar({
       <button
         type="button"
         onClick={onNewSession}
-        className="mt-8 flex h-10 w-full items-center justify-center gap-2 rounded-md bg-ink text-sm font-semibold text-white transition hover:bg-slate-800"
+        className="mt-8 flex h-10 w-full items-center justify-center gap-2 rounded-md bg-violet text-sm font-semibold text-white shadow-brand transition hover:bg-ink"
       >
         <PlusIcon className="h-4 w-4" />
         New Session
       </button>
     </aside>
   );
+}
+
+const localHistoryKey = "crosscast.localHistory.v1";
+
+type LocalHistory = {
+  sessions: SessionSummary[];
+  details: Record<string, SessionDetail>;
+};
+
+function getLocalHistory(): LocalHistory {
+  if (typeof window === "undefined") {
+    return { sessions: fallbackSessions, details: {} };
+  }
+
+  try {
+    const stored = window.localStorage.getItem(localHistoryKey);
+    if (!stored) {
+      return { sessions: fallbackSessions, details: {} };
+    }
+
+    const parsed = JSON.parse(stored) as Partial<LocalHistory>;
+    return {
+      sessions: Array.isArray(parsed.sessions) && parsed.sessions.length ? parsed.sessions : fallbackSessions,
+      details: parsed.details && typeof parsed.details === "object" ? parsed.details : {},
+    };
+  } catch {
+    return { sessions: fallbackSessions, details: {} };
+  }
+}
+
+function setLocalHistory(history: LocalHistory) {
+  if (typeof window === "undefined") return;
+
+  window.localStorage.setItem(
+    localHistoryKey,
+    JSON.stringify({
+      sessions: history.sessions.slice(0, 50),
+      details: history.details,
+    }),
+  );
+}
+
+function getLocalSessionSummaries() {
+  return getLocalHistory().sessions;
+}
+
+function getLocalSessionDetail(id: string) {
+  return getLocalHistory().details[id] ?? null;
+}
+
+function mergeLocalHistory(sessions: SessionSummary[]) {
+  const history = getLocalHistory();
+  const mergedSessions = [...sessions, ...history.sessions.filter((session) => !sessions.some((item) => item.id === session.id))];
+
+  setLocalHistory({
+    ...history,
+    sessions: mergedSessions,
+  });
+}
+
+function saveLocalSession(session: SessionDetail) {
+  const history = getLocalHistory();
+  const summary: SessionSummary = {
+    id: session.id,
+    date: session.date,
+    title: session.title,
+    brief: session.brief,
+  };
+
+  setLocalHistory({
+    sessions: [summary, ...history.sessions.filter((item) => item.id !== session.id)],
+    details: {
+      ...history.details,
+      [session.id]: session,
+    },
+  });
 }
 
 function formatDate(value: string) {

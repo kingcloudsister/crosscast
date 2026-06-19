@@ -18,8 +18,8 @@ export const platformMeta: Record<
     dot: "bg-rednote",
     colorClass: "text-rednote",
     borderClass: "border-rednote",
-    bgClass: "bg-rose-50",
-    ringClass: "ring-rose-100",
+    bgClass: "bg-coral/10",
+    ringClass: "ring-coral/15",
   },
   threads: {
     label: "Threads",
@@ -27,8 +27,8 @@ export const platformMeta: Record<
     dot: "bg-threads",
     colorClass: "text-threads",
     borderClass: "border-threads",
-    bgClass: "bg-blue-50",
-    ringClass: "ring-blue-100",
+    bgClass: "bg-violet/10",
+    ringClass: "ring-violet/15",
   },
   linkedin: {
     label: "LinkedIn",
@@ -36,8 +36,8 @@ export const platformMeta: Record<
     dot: "bg-linkedin",
     colorClass: "text-linkedin",
     borderClass: "border-linkedin",
-    bgClass: "bg-emerald-50",
-    ringClass: "ring-emerald-100",
+    bgClass: "bg-teal/10",
+    ringClass: "ring-teal/15",
   },
 };
 

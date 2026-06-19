@@ -1,6 +1,6 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import type { BriefState } from "@/components/types";
+import { buildVisionUserContent, createOpenRouterChatStream } from "@/lib/openrouter";
 
 const ASSISTANT_SYSTEM_PROMPT = `You are Kelly's content ideation assistant for Crosscast. You help her develop content ideas for her three platforms: RedNote (小红书), Threads, and LinkedIn.
 
@@ -44,20 +44,24 @@ export async function POST(request: Request) {
     const history = await loadMessageHistory(sessionId);
     await saveMessage(sessionId, "user", message);
 
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-    const stream = anthropic.messages.stream({
-      model: "claude-sonnet-4-6",
-      max_tokens: 1200,
+    const stream = await createOpenRouterChatStream({
+      maxTokens: 1200,
       temperature: 0.7,
-      system: ASSISTANT_SYSTEM_PROMPT,
       messages: [
+        {
+          role: "system",
+          content: ASSISTANT_SYSTEM_PROMPT,
+        },
         ...history.map((item) => ({
           role: item.role,
           content: item.content,
         })),
         {
           role: "user" as const,
-          content: buildBriefContextMessage(body.briefContext ?? {}, message),
+          content: buildVisionUserContent(
+            buildBriefContextMessage(body.briefContext ?? {}, message),
+            body.briefContext?.images ?? [],
+          ),
         },
       ],
     });
@@ -68,11 +72,34 @@ export async function POST(request: Request) {
     const readable = new ReadableStream({
       async start(controller) {
         try {
-          for await (const event of stream) {
-            if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-              assistantText += event.delta.text;
-              controller.enqueue(encoder.encode(event.delta.text));
+          if (!stream.body) {
+            throw new Error("OpenRouter returned an empty stream.");
+          }
+
+          const reader = stream.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() ?? "";
+
+            for (const line of lines) {
+              const text = parseOpenRouterStreamLine(line);
+              if (!text) continue;
+              assistantText += text;
+              controller.enqueue(encoder.encode(text));
             }
+          }
+
+          const remainingText = parseOpenRouterStreamLine(buffer);
+          if (remainingText) {
+            assistantText += remainingText;
+            controller.enqueue(encoder.encode(remainingText));
           }
 
           if (assistantText.trim()) {
@@ -162,7 +189,6 @@ function buildBriefContextMessage(brief: Partial<BriefState>, message: string) {
         selectedPlatforms: brief.selectedPlatforms ?? [],
         images: (brief.images ?? []).map((image) => ({
           name: image.name,
-          url: image.url,
         })),
       },
       userMessage: message,
@@ -170,4 +196,26 @@ function buildBriefContextMessage(brief: Partial<BriefState>, message: string) {
     null,
     2,
   );
+}
+
+function parseOpenRouterStreamLine(line: string) {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("data:")) return "";
+
+  const data = trimmed.slice("data:".length).trim();
+  if (!data || data === "[DONE]") return "";
+
+  try {
+    const event = JSON.parse(data) as {
+      choices?: Array<{
+        delta?: {
+          content?: string;
+        };
+      }>;
+    };
+
+    return event.choices?.[0]?.delta?.content ?? "";
+  } catch {
+    return "";
+  }
 }

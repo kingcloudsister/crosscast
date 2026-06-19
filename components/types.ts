@@ -34,6 +34,7 @@ export type ScheduledPostStatus = "scheduled" | "posted" | "draft" | "approved";
 
 export type RedNoteContent = {
   recommended: boolean;
+  recommendedReason?: string | null;
   skipReason: string | null;
   angle: string;
   title: string;
@@ -49,6 +50,7 @@ export type RedNoteContent = {
 
 export type TextPlatformContent = {
   recommended: boolean;
+  recommendedReason?: string | null;
   skipReason: string | null;
   angle: string;
   content: string;
