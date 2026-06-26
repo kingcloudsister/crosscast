@@ -14,6 +14,9 @@ import {
 } from "@/lib/openrouter";
 import { isPlatformKey } from "@/lib/platforms";
 
+export const runtime = "nodejs";
+export const maxDuration = 300;
+
 type RegenerateRequest = {
   generationId?: unknown;
   feedback?: unknown;
