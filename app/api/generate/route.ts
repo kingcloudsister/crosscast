@@ -9,6 +9,9 @@ import {
 } from "@/lib/openrouter";
 import { sanitizeGeneratedContent } from "@/lib/content-sanitizer";
 
+export const runtime = "nodejs";
+export const maxDuration = 300;
+
 const GENERATION_SYSTEM_PROMPT = `You are a cross-platform content strategist and writer for Kelly Ong (哈喽小K). Given raw material, a theme, and context, you generate platform-specific content for RedNote (小红书), Threads, and LinkedIn.
 
 ## HARD RULES (these override all other instructions and apply to every platform)
