@@ -771,6 +771,8 @@ function HistorySidebar({
 }
 
 const localHistoryKey = "crosscast.localHistory.v1";
+const localHistorySessionLimit = 50;
+const localHistoryDetailLimit = 20;
 
 type LocalHistory = {
   sessions: SessionSummary[];
@@ -789,10 +791,10 @@ function getLocalHistory(): LocalHistory {
     }
 
     const parsed = JSON.parse(stored) as Partial<LocalHistory>;
-    return {
+    return sanitizeLocalHistory({
       sessions: Array.isArray(parsed.sessions) && parsed.sessions.length ? parsed.sessions : fallbackSessions,
       details: parsed.details && typeof parsed.details === "object" ? parsed.details : {},
-    };
+    });
   } catch {
     return { sessions: fallbackSessions, details: {} };
   }
@@ -801,13 +803,25 @@ function getLocalHistory(): LocalHistory {
 function setLocalHistory(history: LocalHistory) {
   if (typeof window === "undefined") return;
 
-  window.localStorage.setItem(
-    localHistoryKey,
-    JSON.stringify({
-      sessions: history.sessions.slice(0, 50),
-      details: history.details,
-    }),
-  );
+  const safeHistory = sanitizeLocalHistory(history);
+
+  try {
+    window.localStorage.setItem(localHistoryKey, JSON.stringify(safeHistory));
+  } catch (error) {
+    console.warn("[Crosscast] Could not save local history cache.", error);
+
+    try {
+      window.localStorage.setItem(
+        localHistoryKey,
+        JSON.stringify({
+          sessions: safeHistory.sessions.slice(0, 10),
+          details: {},
+        }),
+      );
+    } catch {
+      window.localStorage.removeItem(localHistoryKey);
+    }
+  }
 }
 
 function getLocalSessionSummaries() {
@@ -844,6 +858,54 @@ function saveLocalSession(session: SessionDetail) {
       [session.id]: session,
     },
   });
+}
+
+function sanitizeLocalHistory(history: LocalHistory): LocalHistory {
+  const sessions = history.sessions.slice(0, localHistorySessionLimit).map(sanitizeLocalSessionSummary);
+  const details: Record<string, SessionDetail> = {};
+
+  for (const session of sessions.slice(0, localHistoryDetailLimit)) {
+    const detail = history.details[session.id];
+    if (detail) {
+      details[session.id] = sanitizeLocalSessionDetail(detail);
+    }
+  }
+
+  return {
+    sessions,
+    details,
+  };
+}
+
+function sanitizeLocalSessionSummary(session: SessionSummary): SessionSummary {
+  return {
+    ...session,
+    brief: sanitizeLocalBrief(session.brief),
+  };
+}
+
+function sanitizeLocalSessionDetail(session: SessionDetail): SessionDetail {
+  return {
+    ...session,
+    brief: sanitizeLocalBrief(session.brief),
+  };
+}
+
+function sanitizeLocalBrief(brief: BriefState): BriefState {
+  const images = brief.images.filter((image) => !isBase64DataUrl(image.url));
+
+  if (images.length === brief.images.length) {
+    return brief;
+  }
+
+  return {
+    ...brief,
+    images,
+  };
+}
+
+function isBase64DataUrl(value: string) {
+  return value.startsWith("data:");
 }
 
 function formatDate(value: string) {
