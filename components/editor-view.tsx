@@ -10,6 +10,7 @@ import type {
   GeneratedContent,
   PlatformKey,
   PlatformStatus,
+  PostImage,
   RedNoteContent,
   TextPlatformContent,
   ThreadsContent,
@@ -23,6 +24,7 @@ type EditorViewProps = {
   statuses: Record<PlatformKey, PlatformStatus>;
   onBack: () => void;
   onSavePlatform: (platform: PlatformKey, content: GeneratedContent["platforms"][PlatformKey]) => Promise<void>;
+  onPatchPlatform: (platform: PlatformKey, content: GeneratedContent["platforms"][PlatformKey]) => void;
   onRegeneratePlatform: (
     platform: PlatformKey,
     feedback: string,
@@ -44,6 +46,7 @@ export function EditorView({
   statuses,
   onBack,
   onSavePlatform,
+  onPatchPlatform,
   onRegeneratePlatform,
   onApprove,
   onPublishLinkedIn,
@@ -87,7 +90,10 @@ export function EditorView({
                   platform={platform}
                   content={content}
                   status={statuses[platform]}
+                  generationId={generation.generationIds?.[platform] ?? null}
+                  briefImages={brief.images}
                   onSavePlatform={onSavePlatform}
+                  onPatchPlatform={onPatchPlatform}
                   onRegeneratePlatform={onRegeneratePlatform}
                   onApprove={onApprove}
                   onPublishLinkedIn={onPublishLinkedIn}
@@ -172,7 +178,10 @@ function PlatformReviewCard({
   platform,
   content,
   status,
+  generationId,
+  briefImages,
   onSavePlatform,
+  onPatchPlatform,
   onRegeneratePlatform,
   onApprove,
   onPublishLinkedIn,
@@ -180,7 +189,10 @@ function PlatformReviewCard({
   platform: PlatformKey;
   content: PlatformContent;
   status: PlatformStatus;
+  generationId: string | null;
+  briefImages: BriefState["images"];
   onSavePlatform: (platform: PlatformKey, content: GeneratedContent["platforms"][PlatformKey]) => Promise<void>;
+  onPatchPlatform: (platform: PlatformKey, content: GeneratedContent["platforms"][PlatformKey]) => void;
   onRegeneratePlatform: (
     platform: PlatformKey,
     feedback: string,
@@ -189,7 +201,6 @@ function PlatformReviewCard({
   onApprove: (platform: PlatformKey, scheduledAt?: string, contentOverride?: PlatformContent) => Promise<void>;
   onPublishLinkedIn: (contentOverride?: TextPlatformContent) => Promise<{ postUrl: string }>;
 }) {
-  const [expandedSlide, setExpandedSlide] = useState<number>(1);
   const [isEditing, setIsEditing] = useState(false);
   const [draftContent, setDraftContent] = useState<PlatformContent | null>(null);
   const [selectedTitleIndex, setSelectedTitleIndex] = useState(() =>
@@ -420,12 +431,44 @@ function PlatformReviewCard({
           platform === "rednote" ? (
             <RedNotePanel
               content={displayedContent as RedNoteContent}
-              expandedSlide={expandedSlide}
               isEditing={isEditing}
               selectedTitleIndex={selectedTitleIndex}
-              onExpandSlide={setExpandedSlide}
+              generationId={generationId}
+              briefImages={briefImages}
               onSelectTitle={selectRedNoteTitle}
-              onChange={setDraftContent}
+              // Slide text stays editable outside Edit mode; those edits are persisted
+              // by the render route, so they only need to live in local state here.
+              onChange={(next) =>
+                isEditing ? setDraftContent(next) : onPatchPlatform("rednote", next)
+              }
+              onSlideRevised={(slideNumber, spec, slideImage) => {
+                const base = content as RedNoteContent;
+                onPatchPlatform("rednote", {
+                  ...base,
+                  carouselSlides: base.carouselSlides.map((slide) =>
+                    slide.slideNumber === slideNumber ? { ...slide, spec } : slide,
+                  ),
+                  slideImages: (base.slideImages ?? []).map((item) =>
+                    item.slideNumber === slideNumber ? slideImage : item,
+                  ),
+                });
+              }}
+              onRendered={(slideImages, backgrounds) => {
+                const base = content as RedNoteContent;
+                const backgroundBySlide = new Map(backgrounds.map((item) => [item.slideNumber, item.url]));
+                onPatchPlatform("rednote", {
+                  ...base,
+                  slideImages,
+                  carouselSlides: base.carouselSlides.map((slide) => {
+                    const url = backgroundBySlide.get(slide.slideNumber);
+                    if (!url || !slide.spec) return slide;
+                    return {
+                      ...slide,
+                      spec: { ...slide.spec, background: { ...slide.spec.background, generatedUrl: url } },
+                    };
+                  }),
+                });
+              }}
             />
           ) : (
             <TextPlatformPanel
@@ -443,6 +486,16 @@ function PlatformReviewCard({
             create a post for this platform.
           </div>
         )}
+
+        {isRecommended && platform === "linkedin" && "content" in displayedContent ? (
+          <LinkedInImageSection
+            content={content as TextPlatformContent}
+            postText={(displayedContent as TextPlatformContent).content}
+            generationId={generationId}
+            briefImages={briefImages}
+            onImageChange={(image) => onPatchPlatform("linkedin", { ...(content as TextPlatformContent), image })}
+          />
+        ) : null}
 
         {error ? (
           <p className="mt-5 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
@@ -531,22 +584,32 @@ function PlatformReviewCard({
 
 function RedNotePanel({
   content,
-  expandedSlide,
   isEditing,
   selectedTitleIndex,
-  onExpandSlide,
+  generationId,
+  briefImages,
   onSelectTitle,
   onChange,
+  onSlideRevised,
+  onRendered,
 }: {
   content: RedNoteContent;
-  expandedSlide: number;
   isEditing: boolean;
   selectedTitleIndex: number;
-  onExpandSlide: (slide: number) => void;
+  generationId: string | null;
+  briefImages: BriefState["images"];
   onSelectTitle: (index: number) => void;
   onChange: (content: RedNoteContent) => void;
+  onSlideRevised: (
+    slideNumber: number,
+    spec: NonNullable<RedNoteContent["carouselSlides"][number]["spec"]>,
+    slideImage: NonNullable<RedNoteContent["slideImages"]>[number],
+  ) => void;
+  onRendered: (
+    slideImages: NonNullable<RedNoteContent["slideImages"]>,
+    backgrounds: Array<{ slideNumber: number; url: string }>,
+  ) => void;
 }) {
-  const activeSlide = content.carouselSlides.find((slide) => slide.slideNumber === expandedSlide);
   const displayedAngle = cleanInternalWorkflowPhrases(content.angle);
   const titleOptions = getRedNoteTitleOptions(content);
   const selectedIndex = normalizeTitleIndex(selectedTitleIndex, titleOptions);
@@ -626,67 +689,285 @@ function RedNotePanel({
         onChange={(value) => onChange({ ...content, caption: value })}
       />
 
-      <div>
-        <p className="mb-3 text-sm font-semibold text-ink">Carousel Slides</p>
-        <div className="flex flex-wrap gap-2">
-          {content.carouselSlides.map((slide) => (
-            <button
-              type="button"
-              key={slide.slideNumber}
-              onClick={() => onExpandSlide(slide.slideNumber)}
-              className={`flex h-16 w-16 items-center justify-center rounded-md border text-sm font-semibold transition ${
-                expandedSlide === slide.slideNumber
-                  ? "border-rednote bg-coral/10 text-rednote ring-4 ring-coral/15"
-                  : "border-line bg-white text-slate-700 hover:border-violet/40 hover:text-violet"
-              }`}
-            >
-              {slide.slideNumber}
-            </button>
-          ))}
-        </div>
-        {activeSlide ? (
-          <div className="mt-3 rounded-md border border-line bg-canvas p-4">
-            {isEditing ? (
-              <div className="space-y-3">
-                <EditableBlock
-                  label="Slide Content"
-                  value={activeSlide.content}
-                  rows={3}
-                  isEditing
-                  onChange={(value) =>
-                    onChange({
-                      ...content,
-                      carouselSlides: content.carouselSlides.map((slide) =>
-                        slide.slideNumber === activeSlide.slideNumber ? { ...slide, content: value } : slide,
-                      ),
-                    })
-                  }
-                />
-                <EditableBlock
-                  label="Design Note"
-                  value={activeSlide.designNote}
-                  rows={3}
-                  isEditing
-                  onChange={(value) =>
-                    onChange({
-                      ...content,
-                      carouselSlides: content.carouselSlides.map((slide) =>
-                        slide.slideNumber === activeSlide.slideNumber ? { ...slide, designNote: value } : slide,
-                      ),
-                    })
-                  }
-                />
-              </div>
-            ) : (
-              <>
-                <p className="text-sm font-semibold text-ink">{activeSlide.content}</p>
-                <p className="mt-2 text-sm leading-6 text-muted">{activeSlide.designNote}</p>
-              </>
-            )}
-          </div>
+      <CarouselSection
+        content={content}
+        generationId={generationId}
+        briefImages={briefImages}
+        onChange={onChange}
+        onRendered={onRendered}
+        onSlideRevised={onSlideRevised}
+      />
+    </div>
+  );
+}
+
+function updateSlideSpecText(
+  content: RedNoteContent,
+  slideNumber: number,
+  patch: Partial<NonNullable<RedNoteContent["carouselSlides"][number]["spec"]>["text"]>,
+): RedNoteContent {
+  return {
+    ...content,
+    carouselSlides: content.carouselSlides.map((slide) =>
+      slide.slideNumber === slideNumber && slide.spec
+        ? { ...slide, spec: { ...slide.spec, text: { ...slide.spec.text, ...patch } } }
+        : slide,
+    ),
+  };
+}
+
+// The carousel is the real RedNote deliverable: one strip of images, one button,
+// and everything per-slide happens on the selected image (comment, download,
+// background, and a tucked-away direct text editor).
+function CarouselSection({
+  content,
+  generationId,
+  briefImages,
+  onChange,
+  onRendered,
+  onSlideRevised,
+}: {
+  content: RedNoteContent;
+  generationId: string | null;
+  briefImages: BriefState["images"];
+  onChange: (content: RedNoteContent) => void;
+  onRendered: (
+    slideImages: NonNullable<RedNoteContent["slideImages"]>,
+    backgrounds: Array<{ slideNumber: number; url: string }>,
+  ) => void;
+  onSlideRevised: (
+    slideNumber: number,
+    spec: NonNullable<RedNoteContent["carouselSlides"][number]["spec"]>,
+    slideImage: NonNullable<RedNoteContent["slideImages"]>[number],
+  ) => void;
+}) {
+  const [selectedSlide, setSelectedSlide] = useState<number | null>(null);
+  const [comment, setComment] = useState("");
+  const [isBusy, setIsBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const renderableSlides = content.carouselSlides.filter((slide) => slide.spec?.text?.title);
+  const slideImages = content.slideImages ?? [];
+  const activeSlide =
+    selectedSlide !== null ? content.carouselSlides.find((slide) => slide.slideNumber === selectedSlide) : null;
+  const activeImage =
+    selectedSlide !== null ? slideImages.find((item) => item.slideNumber === selectedSlide) : null;
+
+  const renderSlides = async (regenerateBackgrounds: number[] = []) => {
+    if (!generationId) {
+      setError("Generate or load a saved RedNote post before rendering images.");
+      return;
+    }
+
+    setIsBusy(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/rednote/render", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          generationId,
+          slides: renderableSlides.map((slide) => ({ slideNumber: slide.slideNumber, spec: slide.spec })),
+          images: briefImages,
+          regenerateBackgrounds,
+        }),
+      });
+      const data = (await response.json()) as {
+        slideImages?: RedNoteContent["slideImages"];
+        backgrounds?: Array<{ slideNumber: number; url: string }>;
+        error?: string;
+      };
+
+      if (!response.ok || !data.slideImages) {
+        throw new Error(data.error ?? "Could not generate the carousel images.");
+      }
+
+      onRendered(data.slideImages, data.backgrounds ?? []);
+    } catch (caughtError) {
+      const message = caughtError instanceof Error ? caughtError.message : "Could not generate the carousel images.";
+      setError(message);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const applyComment = async () => {
+    if (!generationId || selectedSlide === null || !activeSlide?.spec || !comment.trim()) return;
+
+    setIsBusy(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/rednote/slide-feedback", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          generationId,
+          slideNumber: selectedSlide,
+          spec: activeSlide.spec,
+          comment: comment.trim(),
+          images: briefImages,
+        }),
+      });
+      const data = (await response.json()) as {
+        spec?: NonNullable<RedNoteContent["carouselSlides"][number]["spec"]>;
+        slideImage?: NonNullable<RedNoteContent["slideImages"]>[number];
+        error?: string;
+      };
+
+      if (!response.ok || !data.spec || !data.slideImage) {
+        throw new Error(data.error ?? "Could not update the slide.");
+      }
+
+      onSlideRevised(selectedSlide, data.spec, data.slideImage);
+      setComment("");
+    } catch (caughtError) {
+      const message = caughtError instanceof Error ? caughtError.message : "Could not update the slide.";
+      setError(message);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  return (
+    <div>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <p className="text-sm font-semibold text-ink">Carousel</p>
+        {renderableSlides.length ? (
+          <ActionButton
+            icon={<RefreshIcon className="h-4 w-4" />}
+            label={
+              isBusy
+                ? "Working..."
+                : slideImages.length
+                  ? "Re-render all"
+                  : `Generate images (${renderableSlides.length})`
+            }
+            onClick={() => renderSlides()}
+            disabled={isBusy}
+            strong={!slideImages.length}
+          />
         ) : null}
       </div>
 
+      {!renderableSlides.length ? (
+        <p className="rounded-md border border-dashed border-line bg-white px-3 py-3 text-sm leading-6 text-muted">
+          This draft has no renderable slides yet. Regenerate the RedNote draft to get them.
+        </p>
+      ) : !slideImages.length ? (
+        <p className="rounded-md border border-dashed border-line bg-white px-3 py-3 text-sm leading-6 text-muted">
+          {renderableSlides.length} slides ready. Generate the images, then click any image to tweak it.
+        </p>
+      ) : (
+        <div className="flex gap-3 overflow-x-auto pb-2">
+          {slideImages.map((slide) => (
+            <button
+              type="button"
+              key={slide.slideNumber}
+              onClick={() => {
+                setSelectedSlide(selectedSlide === slide.slideNumber ? null : slide.slideNumber);
+                setComment("");
+              }}
+              className={`w-40 shrink-0 overflow-hidden rounded-md border text-left transition ${
+                selectedSlide === slide.slideNumber
+                  ? "border-rednote ring-4 ring-coral/15"
+                  : "border-line hover:border-violet/40"
+              }`}
+            >
+              <img src={slide.url} alt={`Slide ${slide.slideNumber}`} className="aspect-[3/4] w-full object-cover" />
+              <span className="block border-t border-line bg-white px-2 py-1 text-xs font-semibold text-muted">
+                {slide.slideNumber}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {activeImage && activeSlide?.spec ? (
+        <div className="mt-2 rounded-md border border-line bg-white p-3">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-semibold uppercase text-muted">Slide {activeImage.slideNumber}</p>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => renderSlides([activeImage.slideNumber])}
+                disabled={isBusy}
+                title="Regenerate this slide image with the same text"
+                className="text-xs font-semibold text-muted transition hover:text-violet disabled:opacity-60"
+              >
+                Redraw
+              </button>
+              <a
+                href={`${activeImage.url}?download=slide-${activeImage.slideNumber}.png`}
+                className="text-xs font-semibold text-violet hover:underline"
+              >
+                Download
+              </a>
+            </div>
+          </div>
+
+          <div className="mt-2 flex gap-2">
+            <textarea
+              value={comment}
+              onChange={(event) => setComment(event.target.value)}
+              rows={2}
+              placeholder='这张图要改什么？例如 "标题口语一点" / "少两条bullet" / "背景亮一点"'
+              className="min-w-0 flex-1 rounded-md border border-line bg-white px-3 py-2 text-sm leading-6 text-ink outline-none focus:border-violet/50 focus:ring-4 focus:ring-violet/10"
+            />
+            <ActionButton
+              label={isBusy ? "..." : "Apply"}
+              onClick={applyComment}
+              disabled={isBusy || !comment.trim()}
+              strong
+            />
+          </div>
+
+          <details className="mt-2">
+            <summary className="cursor-pointer text-xs font-semibold text-muted transition hover:text-violet">
+              Edit text directly
+            </summary>
+            <div className="mt-2 space-y-2">
+              <EditableBlock
+                label="Title"
+                value={activeSlide.spec.text.title}
+                rows={1}
+                isEditing
+                onChange={(value) => onChange(updateSlideSpecText(content, activeSlide.slideNumber, { title: value }))}
+              />
+              <EditableBlock
+                label="Subtitle"
+                value={activeSlide.spec.text.subtitle ?? ""}
+                rows={1}
+                isEditing
+                onChange={(value) =>
+                  onChange(updateSlideSpecText(content, activeSlide.slideNumber, { subtitle: value || null }))
+                }
+              />
+              <EditableBlock
+                label="Body (one line per bullet)"
+                value={(activeSlide.spec.text.body ?? []).join("\n")}
+                rows={3}
+                isEditing
+                onChange={(value) =>
+                  onChange(
+                    updateSlideSpecText(content, activeSlide.slideNumber, {
+                      body: value.split("\n").filter((line) => line.trim()),
+                    }),
+                  )
+                }
+              />
+              <p className="text-xs leading-5 text-muted">Text edits are applied when you re-render.</p>
+            </div>
+          </details>
+        </div>
+      ) : null}
+
+      {error ? (
+        <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>
+      ) : null}
     </div>
   );
 }
@@ -732,6 +1013,104 @@ function TextPlatformPanel({
           onSelectTopic={onSelectThreadsTopic}
           onChange={(nextContent) => onChange(nextContent)}
         />
+      ) : null}
+    </div>
+  );
+}
+
+function LinkedInImageSection({
+  content,
+  postText,
+  generationId,
+  briefImages,
+  onImageChange,
+}: {
+  content: TextPlatformContent;
+  postText: string;
+  generationId: string | null;
+  briefImages: BriefState["images"];
+  onImageChange: (image: PostImage) => void;
+}) {
+  const image = content.image ?? null;
+  const [instructions, setInstructions] = useState(image?.instructions ?? "");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setInstructions(image?.instructions ?? "");
+  }, [image]);
+
+  const generate = async () => {
+    if (!generationId) {
+      setError("Generate or load a saved LinkedIn post before generating an image.");
+      return;
+    }
+
+    setIsGenerating(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/linkedin/image", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          generationId,
+          postText,
+          images: briefImages,
+          instructions: instructions.trim() || undefined,
+        }),
+      });
+      const data = (await response.json()) as { image?: PostImage; error?: string };
+
+      if (!response.ok || !data.image) {
+        throw new Error(data.error ?? "Could not generate the LinkedIn image.");
+      }
+
+      onImageChange(data.image);
+    } catch (caughtError) {
+      const message = caughtError instanceof Error ? caughtError.message : "Could not generate the LinkedIn image.";
+      setError(message);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  return (
+    <div className="mt-5 rounded-md border border-line bg-canvas p-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-sm font-semibold text-ink">Post Image</p>
+        <ActionButton
+          icon={<RefreshIcon className="h-4 w-4" />}
+          label={isGenerating ? "Generating..." : image ? "Regenerate" : "Generate image"}
+          onClick={generate}
+          disabled={isGenerating}
+          strong={!image}
+        />
+      </div>
+
+      {image ? (
+        <div className="mt-3 overflow-hidden rounded-md border border-line bg-white">
+          <img src={image.url} alt="Generated LinkedIn post image" className="w-full object-contain" />
+        </div>
+      ) : (
+        <p className="mt-3 rounded-md border border-dashed border-line bg-white px-3 py-4 text-sm leading-6 text-muted">
+          No image yet. Generate composes one LinkedIn-ready image from the post text and your uploaded raw materials.
+        </p>
+      )}
+
+      {image ? (
+        <textarea
+          value={instructions}
+          onChange={(event) => setInstructions(event.target.value)}
+          rows={2}
+          placeholder='What should change? e.g. "use the analytics screenshot as the hero", "no text in the image" — then Regenerate'
+          className="mt-2 w-full rounded-md border border-line bg-white px-3 py-2 text-sm leading-6 text-ink outline-none focus:border-violet/50 focus:ring-4 focus:ring-violet/10"
+        />
+      ) : null}
+
+      {error ? (
+        <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>
       ) : null}
     </div>
   );

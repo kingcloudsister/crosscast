@@ -1,4 +1,11 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import type { GeneratedContent, PlatformKey } from "@/components/types";
+
+// Loaded from an editable file so the slide-spec contract can change without code edits.
+export function loadRedNoteSlideSpecPrompt() {
+  return readFileSync(path.join(process.cwd(), "prompts", "rednote-slide-spec.md"), "utf8");
+}
 
 export const GENERATION_SYSTEM_PROMPT = `You are a cross-platform content strategist and writer for Kelly Ong (哈喽小K). Given raw material, a theme, and context, you generate platform-specific content for RedNote (小红书), Threads, and LinkedIn.
 
@@ -20,7 +27,7 @@ Content TypeRedNoteThreadsLinkedInAI tool tutorial / workflowPRIMARYSKIPSKIPAI p
 - Title options: Generate exactly 3 titleOptions. Each must be 20 Chinese characters or fewer, have a genuine hook, and use a different hook type from the other two.
 - Hashtags: 7-12 tags. Mix of broad (#AI工具 #效率神器) and specific (tool names). Always include tool names as hashtags.
 - CTA: Natural, not commanding. "大家可以试试看" not "点赞收藏关注". Spark comments by asking a question.
-- Also suggest carousel slide structure (what goes on each slide, 6-8 slides).
+- Also suggest carousel slide structure following the RedNote carousel visual planner section below (3-6 slides, default 5).
 - Compliance: No absolute terms (最好/第一/100%), no exaggerated claims, no direct contact info, no competitor bashing.
 
 ### Threads — kellydellywelly
@@ -125,6 +132,29 @@ export const generationToolSchema = {
     },
   },
 };
+
+// Models sometimes return platforms as an array of { platform: "rednote", ... }
+// objects instead of an object keyed by platform name; accept both shapes.
+export function normalizePlatformsShape(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  if (!Array.isArray(record.platforms)) return value;
+
+  const platforms: Record<string, unknown> = {};
+  for (const item of record.platforms) {
+    if (
+      item &&
+      typeof item === "object" &&
+      !Array.isArray(item) &&
+      typeof (item as Record<string, unknown>).platform === "string"
+    ) {
+      const { platform, ...rest } = item as Record<string, unknown> & { platform: string };
+      platforms[platform.toLowerCase()] = rest;
+    }
+  }
+
+  return { ...record, platforms };
+}
 
 export function validateGeneration(value: unknown): GeneratedContent {
   const parsed = value as GeneratedContent;

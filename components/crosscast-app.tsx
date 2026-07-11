@@ -297,6 +297,18 @@ export function CrosscastApp() {
     }));
   };
 
+  // Local-only update for changes the server has already persisted (e.g. a generated
+  // image); unlike updatePlatformContent it never touches platform statuses.
+  const patchPlatformContent = (platform: PlatformKey, content: GeneratedContent["platforms"][PlatformKey]) => {
+    setGeneration((current) => ({
+      ...current,
+      platforms: {
+        ...current.platforms,
+        [platform]: content,
+      },
+    }));
+  };
+
   const savePlatformContent = async (platform: PlatformKey, content: GeneratedContent["platforms"][PlatformKey]) => {
     const generationId = generation.generationIds?.[platform];
     if (!generationId) {
@@ -666,6 +678,7 @@ export function CrosscastApp() {
                   statuses={statuses}
                   onBack={() => setView("create")}
                   onSavePlatform={savePlatformContent}
+                  onPatchPlatform={patchPlatformContent}
                   onRegeneratePlatform={regeneratePlatform}
                   onApprove={approvePlatform}
                   onPublishLinkedIn={publishLinkedInPost}

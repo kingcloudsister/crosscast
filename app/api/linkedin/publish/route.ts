@@ -18,7 +18,8 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await publishTextToLinkedIn(postText);
+    const imageUrl = generationId ? await loadGenerationImageUrl(generationId) : null;
+    const result = await publishTextToLinkedIn(postText, { imageUrl });
     const tasks: Array<Promise<void>> = [];
     if (generationId) tasks.push(markGenerationPublished(generationId, result));
     if (scheduledPostId) {
@@ -38,6 +39,25 @@ export async function POST(request: Request) {
     const message = caughtError instanceof Error ? caughtError.message : "Could not publish to LinkedIn.";
     return Response.json({ error: message }, { status: message.includes("401") ? 401 : 500 });
   }
+}
+
+async function loadGenerationImageUrl(generationId: string) {
+  const { data, error } = await supabaseAdmin.from("generations").select("content").eq("id", generationId).single();
+
+  if (error) {
+    console.error("[LinkedIn] Could not load generation image before publishing", error.message);
+    return null;
+  }
+
+  return extractImageUrl(data?.content);
+}
+
+function extractImageUrl(content: unknown) {
+  if (!content || typeof content !== "object" || !("image" in content)) return null;
+  const image = (content as { image?: unknown }).image;
+  if (!image || typeof image !== "object" || !("url" in image)) return null;
+  const url = (image as { url?: unknown }).url;
+  return typeof url === "string" && url ? url : null;
 }
 
 async function markGenerationPublished(generationId: string, result: { id: string; url: string }) {

@@ -1,6 +1,7 @@
 import type { UploadedImage } from "@/components/types";
 
 export const OPENROUTER_MODEL = "anthropic/claude-sonnet-4-6";
+export const OPENROUTER_IMAGE_MODEL = "openai/gpt-image-2";
 
 export type JsonSchema = Record<string, unknown>;
 
@@ -137,6 +138,72 @@ export function parseJsonFromOpenRouterContent(content: string) {
 
   console.error("[OpenRouter] Failed to parse JSON from message.content:", content);
   throw new Error("OpenRouter returned content that could not be parsed as JSON. See server logs for the raw content.");
+}
+
+type OpenRouterImageRequest = {
+  prompt: string;
+  // Only sent when set — GPT Image models pick their own canvas and reject the param.
+  aspectRatio?: string;
+  // HTTP(S) URLs or base64 data URLs the model uses as visual references.
+  inputReferences?: string[];
+  // Overrides the default image model (e.g. Gemini for calls that need a fixed aspect ratio).
+  model?: string;
+};
+
+type OpenRouterImageResponse = {
+  data?: Array<{ b64_json?: string }>;
+  usage?: {
+    cost?: number;
+    total_tokens?: number;
+  };
+};
+
+// Image generation uses OpenRouter's dedicated images endpoint, not chat completions.
+// Images come back base64-encoded in data[0].b64_json.
+export async function createOpenRouterImage(request: OpenRouterImageRequest) {
+  const response = await fetch("https://openrouter.ai/api/v1/images", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${getOpenRouterApiKey()}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "http://localhost:3000",
+      "X-Title": "Crosscast",
+    },
+    body: JSON.stringify({
+      model: request.model ?? OPENROUTER_IMAGE_MODEL,
+      prompt: request.prompt,
+      aspect_ratio: request.aspectRatio,
+      input_references: request.inputReferences?.length
+        ? request.inputReferences.slice(0, 16).map((url) => ({
+            type: "image_url",
+            image_url: { url },
+          }))
+        : undefined,
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`OpenRouter image request failed (${response.status}): ${detail || response.statusText}`);
+  }
+
+  const result = (await response.json()) as OpenRouterImageResponse;
+  const base64 = result.data?.[0]?.b64_json;
+
+  if (!base64) {
+    throw new Error("OpenRouter image response did not include image data.");
+  }
+
+  console.log("[OpenRouter] Image generated", {
+    model: request.model ?? OPENROUTER_IMAGE_MODEL,
+    cost: result.usage?.cost ?? null,
+    totalTokens: result.usage?.total_tokens ?? null,
+  });
+
+  return {
+    buffer: Buffer.from(base64, "base64"),
+    cost: result.usage?.cost ?? null,
+  };
 }
 
 function getOpenRouterApiKey() {

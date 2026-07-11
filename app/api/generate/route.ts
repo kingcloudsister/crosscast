@@ -8,6 +8,7 @@ import {
   parseJsonFromOpenRouterContent,
 } from "@/lib/openrouter";
 import { sanitizeGeneratedContent } from "@/lib/content-sanitizer";
+import { loadRedNoteSlideSpecPrompt, normalizePlatformsShape } from "@/lib/generation-utils";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -437,8 +438,10 @@ async function requestGeneration(
   const userContent = buildVisionUserContent(buildUserPrompt(request), request.images);
   logOpenRouterVisionRequest(userContent);
 
+  // Must fit all three platform drafts plus RedNote slide specs; headroom is cheap
+  // because output tokens are billed only as produced.
   const response = await createOpenRouterChatCompletion({
-    maxTokens: 5000,
+    maxTokens: 12000,
     temperature: 0.7,
     responseFormat: {
       type: "json_object",
@@ -446,7 +449,7 @@ async function requestGeneration(
     messages: [
       {
         role: "system",
-        content: GENERATION_SYSTEM_PROMPT,
+        content: `${GENERATION_SYSTEM_PROMPT}\n\n${loadRedNoteSlideSpecPrompt()}`,
       },
       {
         role: "user",
@@ -528,7 +531,7 @@ function logOpenRouterVisionRequest(content: ReturnType<typeof buildVisionUserCo
 }
 
 function parseOpenRouterJson(text: string): GeneratedContent {
-  const parsed = parseJsonFromOpenRouterContent(text);
+  const parsed = normalizePlatformsShape(parseJsonFromOpenRouterContent(text));
   return validateGenerationShape(parsed);
 }
 
