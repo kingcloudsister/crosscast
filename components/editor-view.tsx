@@ -52,61 +52,101 @@ export function EditorView({
   onPublishLinkedIn,
 }: EditorViewProps) {
   const platformsWithContent = platformOrder.filter((platform) => generation.platforms[platform]);
-  const recommendedPlatforms = platformsWithContent.filter((platform) => generation.platforms[platform]?.recommended);
-  const notRecommendedPlatforms = platformsWithContent.filter((platform) => !generation.platforms[platform]?.recommended);
+  const [activePlatform, setActivePlatform] = useState<PlatformKey | null>(null);
+  const [isBriefOpen, setIsBriefOpen] = useState(false);
+
+  // Default to the first recommended platform; re-derive when the generation changes.
+  useEffect(() => {
+    const preferred =
+      platformsWithContent.find((platform) => generation.platforms[platform]?.recommended) ?? platformsWithContent[0] ?? null;
+    setActivePlatform((current) => (current && platformsWithContent.includes(current) ? current : preferred));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [generation]);
+
+  const activeContent = activePlatform ? generation.platforms[activePlatform] : null;
 
   return (
-    <section className="mx-auto w-full max-w-[1600px] px-6 py-7 lg:px-8">
-      <button
-        type="button"
-        onClick={onBack}
-        className="mb-6 inline-flex items-center gap-2 text-sm font-semibold text-slate-700 transition hover:text-ink"
-      >
-        <ArrowLeftIcon className="h-4 w-4" />
-        Back to Brief
-      </button>
+    <section className="mx-auto w-full max-w-[1040px] px-6 pb-10 pt-5">
+      <div className="mb-4 flex items-center gap-3 rounded-lg border border-line bg-white px-4 py-3 shadow-workspace">
+        <button
+          type="button"
+          onClick={onBack}
+          aria-label="Back to brief"
+          className="shrink-0 text-slate-700 transition hover:text-ink"
+        >
+          <ArrowLeftIcon className="h-4 w-4" />
+        </button>
+        <p className="min-w-0 flex-1 truncate text-sm font-semibold text-ink">{brief.theme || "Untitled brief"}</p>
+        {brief.images.length ? (
+          <span className="shrink-0 text-xs font-semibold text-muted">{brief.images.length} images</span>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => setIsBriefOpen((open) => !open)}
+          className="shrink-0 rounded-md bg-canvas px-2.5 py-1.5 text-xs font-semibold text-muted transition hover:text-violet"
+        >
+          {isBriefOpen ? "Hide brief ▴" : "View brief ▾"}
+        </button>
+      </div>
 
-      <RawMaterialsPanel brief={brief} />
+      {isBriefOpen ? <RawMaterialsPanel brief={brief} /> : null}
 
-      <section>
-        <div className="mb-3 flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
-          <div>
-            <h2 className="text-lg font-semibold text-ink">Platform Comparison</h2>
-            <p className="mt-1 text-sm text-muted">Review RedNote, Threads, and LinkedIn side by side.</p>
-          </div>
-          <span className="text-sm font-medium text-muted">
-            {recommendedPlatforms.length} recommended · {notRecommendedPlatforms.length} alternative
-          </span>
-        </div>
-
-        {platformsWithContent.length ? (
-          <div className="grid gap-4 xl:grid-cols-3">
+      {platformsWithContent.length ? (
+        <>
+          <div className="flex gap-2">
             {platformsWithContent.map((platform) => {
-              const content = generation.platforms[platform];
-              if (!content) return null;
+              const meta = platformMeta[platform];
+              const isActive = platform === activePlatform;
               return (
-                <PlatformReviewCard
+                <button
                   key={platform}
-                  platform={platform}
-                  content={content}
-                  status={statuses[platform]}
-                  generationId={generation.generationIds?.[platform] ?? null}
-                  briefImages={brief.images}
-                  onSavePlatform={onSavePlatform}
-                  onPatchPlatform={onPatchPlatform}
-                  onRegeneratePlatform={onRegeneratePlatform}
-                  onApprove={onApprove}
-                  onPublishLinkedIn={onPublishLinkedIn}
-                />
+                  type="button"
+                  onClick={() => setActivePlatform(platform)}
+                  className={`flex flex-1 items-center justify-center gap-2.5 rounded-t-lg px-4 py-3 text-sm transition ${
+                    isActive
+                      ? `border-b-2 bg-white font-bold text-ink ${meta.borderClass}`
+                      : "bg-white/50 font-semibold text-muted hover:bg-white/80 hover:text-ink"
+                  }`}
+                >
+                  <span className={`h-2 w-2 rounded-full ${meta.dot}`} />
+                  {meta.label}
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                      statuses[platform] === "posted"
+                        ? "bg-teal/10 text-teal"
+                        : statuses[platform] === "approved"
+                          ? "bg-violet/10 text-violet"
+                          : "bg-canvas text-muted"
+                    }`}
+                  >
+                    {statusLabel(statuses[platform])}
+                  </span>
+                </button>
               );
             })}
           </div>
-        ) : (
-          <div className="rounded-lg border border-dashed border-line bg-white p-5 text-sm text-muted">
-            No platform drafts were generated for this brief yet.
-          </div>
-        )}
-      </section>
+
+          {activePlatform && activeContent ? (
+            <PlatformReviewCard
+              key={activePlatform}
+              platform={activePlatform}
+              content={activeContent}
+              status={statuses[activePlatform]}
+              generationId={generation.generationIds?.[activePlatform] ?? null}
+              briefImages={brief.images}
+              onSavePlatform={onSavePlatform}
+              onPatchPlatform={onPatchPlatform}
+              onRegeneratePlatform={onRegeneratePlatform}
+              onApprove={onApprove}
+              onPublishLinkedIn={onPublishLinkedIn}
+            />
+          ) : null}
+        </>
+      ) : (
+        <div className="rounded-lg border border-dashed border-line bg-white p-5 text-sm text-muted">
+          No platform drafts were generated for this brief yet.
+        </div>
+      )}
     </section>
   );
 }
@@ -389,19 +429,10 @@ function PlatformReviewCard({
   };
 
   return (
-    <div className="flex max-h-none min-h-[38rem] flex-col rounded-lg border border-line bg-white shadow-workspace xl:max-h-[calc(100vh-15rem)]">
-      <div className="flex shrink-0 flex-col justify-between gap-3 border-b border-line p-4 sm:flex-row sm:items-start">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className={`h-2.5 w-2.5 rounded-full ${meta.dot}`} />
-            <h3 className="text-lg font-semibold text-ink">{meta.label}</h3>
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <span className="w-fit rounded-md border border-line bg-canvas px-2.5 py-1 text-xs font-semibold text-slate-700">
-            {statusLabel(status)}
-          </span>
-          {!isRecommended ? (
+    <div className="rounded-b-lg rounded-tr-lg border border-line bg-white shadow-workspace">
+      <div className="p-6">
+        {!isRecommended ? (
+          <div className="mb-4 flex justify-end">
             <button
               type="button"
               onClick={generateAnyway}
@@ -410,11 +441,8 @@ function PlatformReviewCard({
             >
               {isGeneratingAnyway ? "Generating..." : "Generate anyway"}
             </button>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          </div>
+        ) : null}
         {!isRecommended && displayedContent.skipReason ? (
           <div className="mb-4 rounded-md border border-amber/30 bg-amber/10 px-3 py-2 text-sm leading-6 text-ink">
             {cleanInternalWorkflowPhrases(displayedContent.skipReason)}
@@ -523,7 +551,7 @@ function PlatformReviewCard({
       </div>
 
       {isRecommended ? (
-        <div className="flex shrink-0 flex-wrap gap-2 border-t border-line p-4">
+        <div className="sticky bottom-0 z-10 flex flex-wrap items-center gap-2 rounded-b-lg border-t border-line bg-white/95 px-6 py-3 backdrop-blur">
           <ActionButton
             icon={<CopyIcon className="h-4 w-4" />}
             label={copyStatus === "copied" ? "Copied" : copyStatus === "selected" ? "Selected" : "Copy"}
@@ -543,39 +571,33 @@ function PlatformReviewCard({
             onClick={regeneratePlatformDraft}
             disabled={isRegeneratingPlatform}
           />
-          <ActionButton
-            icon={<CheckIcon className="h-4 w-4" />}
-            label={isApproving ? "Approving..." : status === "posted" ? "Posted" : status === "approved" ? "Approved" : "Approve + Schedule"}
-            onClick={approvePost}
-            disabled={isApproving || status === "posted"}
-            strong
-          />
-          {platform === "linkedin" && (status === "approved" || status === "posted") ? (
-            <ActionButton
-              label={
-                isPublishingLinkedIn ? "Posting..." : status === "posted" || linkedInPostUrl ? "Posted to LinkedIn" : "Post to LinkedIn"
-              }
-              onClick={publishLinkedInPost}
-              disabled={isPublishingLinkedIn || status === "posted" || Boolean(linkedInPostUrl)}
-              strong
-            />
-          ) : null}
-        </div>
-      ) : null}
-
-      {isRecommended ? (
-        <div className="mx-4 mb-4 shrink-0 rounded-md border border-line bg-canvas p-3">
-          <label className="block text-sm font-semibold text-ink">
-            Suggested date & time
+          <div className="ml-auto flex flex-wrap items-center gap-2">
             <input
               ref={scheduleInputRef}
               type="datetime-local"
               value={scheduleDateTime}
               onChange={(event) => setScheduleDateTime(event.target.value)}
-              className="mt-2 block h-10 w-full rounded-md border border-line bg-white px-3 text-sm font-medium text-ink outline-none focus:border-violet/50 focus:ring-4 focus:ring-violet/10"
+              title={postingRecommendation.reason}
+              className="h-10 rounded-md border border-line bg-canvas px-3 text-sm font-medium text-ink outline-none focus:border-violet/50 focus:ring-4 focus:ring-violet/10"
             />
-          </label>
-          <p className="mt-2 text-sm leading-6 text-muted">{postingRecommendation.reason}</p>
+            <ActionButton
+              icon={<CheckIcon className="h-4 w-4" />}
+              label={isApproving ? "Approving..." : status === "posted" ? "Posted" : status === "approved" ? "Approved" : "Approve + Schedule"}
+              onClick={approvePost}
+              disabled={isApproving || status === "posted"}
+              strong
+            />
+            {platform === "linkedin" && (status === "approved" || status === "posted") ? (
+              <ActionButton
+                label={
+                  isPublishingLinkedIn ? "Posting..." : status === "posted" || linkedInPostUrl ? "Posted to LinkedIn" : "Post to LinkedIn"
+                }
+                onClick={publishLinkedInPost}
+                disabled={isPublishingLinkedIn || status === "posted" || Boolean(linkedInPostUrl)}
+                strong
+              />
+            ) : null}
+          </div>
         </div>
       ) : null}
     </div>
@@ -610,6 +632,7 @@ function RedNotePanel({
     backgrounds: Array<{ slideNumber: number; url: string }>,
   ) => void;
 }) {
+  const [showTitleOptions, setShowTitleOptions] = useState(false);
   const displayedAngle = cleanInternalWorkflowPhrases(content.angle);
   const titleOptions = getRedNoteTitleOptions(content);
   const selectedIndex = normalizeTitleIndex(selectedTitleIndex, titleOptions);
@@ -641,36 +664,46 @@ function RedNotePanel({
       />
       {hasGeneratedTitleOptions ? (
         <div>
-          <p className="mb-2 block text-sm font-semibold text-ink">Title Options</p>
-          <div className="space-y-2">
-            {titleOptions.map((title, index) => {
-              const selected = index === selectedIndex;
-              return (
-                <button
-                  type="button"
-                  key={`${title}-${index}`}
-                  onClick={() => onSelectTitle(index)}
-                  className={`w-full rounded-md border px-3 py-2 text-left text-sm leading-6 transition ${
-                    selected
-                      ? "border-rednote bg-coral/10 text-ink ring-4 ring-coral/15"
-                      : "border-line bg-white text-ink hover:border-violet/40"
-                  }`}
-                >
-                  <span className="mb-1 block text-xs font-semibold uppercase text-muted">Option {index + 1}</span>
-                  <span className="block">{title}</span>
-                </button>
-              );
-            })}
+          <div className="mb-2 flex items-center justify-between">
+            <p className="block text-sm font-semibold text-ink">Title</p>
+            <button
+              type="button"
+              onClick={() => setShowTitleOptions((open) => !open)}
+              className="text-xs font-semibold text-violet transition hover:underline"
+            >
+              {showTitleOptions ? "Hide options" : `${titleOptions.length - 1} more options`}
+            </button>
           </div>
-          <div className="mt-3">
-            <EditableBlock
-              label="Selected title"
-              value={titleOptions[selectedIndex] ?? ""}
-              rows={1}
-              isEditing={isEditing}
-              onChange={updateSelectedTitle}
-            />
-          </div>
+          {isEditing ? (
+            <EditableBlock label="" value={titleOptions[selectedIndex] ?? ""} rows={1} isEditing onChange={updateSelectedTitle} />
+          ) : (
+            <p className="text-xl font-bold leading-7 text-ink">{titleOptions[selectedIndex] ?? ""}</p>
+          )}
+          {showTitleOptions ? (
+            <div className="mt-3 space-y-2">
+              {titleOptions.map((title, index) => {
+                const selected = index === selectedIndex;
+                return (
+                  <button
+                    type="button"
+                    key={`${title}-${index}`}
+                    onClick={() => {
+                      onSelectTitle(index);
+                      setShowTitleOptions(false);
+                    }}
+                    className={`w-full rounded-md border px-3 py-2 text-left text-sm leading-6 transition ${
+                      selected
+                        ? "border-rednote bg-coral/10 text-ink ring-4 ring-coral/15"
+                        : "border-line bg-white text-ink hover:border-violet/40"
+                    }`}
+                  >
+                    <span className="mb-1 block text-xs font-semibold uppercase text-muted">Option {index + 1}</span>
+                    <span className="block">{title}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
         </div>
       ) : (
         <EditableBlock

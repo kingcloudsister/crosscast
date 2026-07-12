@@ -23,6 +23,7 @@ import type {
 
 export function CrosscastApp() {
   const [view, setView] = useState<ViewKey>("create");
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [brief, setBrief] = useState<BriefState>(defaultBrief);
   const [sessions, setSessions] = useState<SessionSummary[]>(fallbackSessions);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
@@ -633,30 +634,52 @@ export function CrosscastApp() {
         >
           <img src="/crosscast-logo.png" alt="Crosscast" className="h-9 w-auto object-contain" />
         </button>
-        <nav className="flex items-center gap-1 rounded-md border border-line bg-canvas/80 p-1 shadow-sm">
-          {(["create", "calendar", "dashboard"] as ViewKey[]).map((item) => (
-            <button
-              key={item}
-              type="button"
-              onClick={() => setView(item)}
-              className={`h-9 rounded px-3 text-sm font-semibold capitalize transition ${
-                view === item ? "bg-white text-violet shadow-sm" : "text-muted hover:bg-white/70 hover:text-ink"
-              }`}
-            >
-              {item}
-            </button>
-          ))}
-        </nav>
+        <div className="flex items-center gap-3">
+          <nav className="flex items-center gap-1 rounded-md border border-line bg-canvas/80 p-1 shadow-sm">
+            {(["create", "calendar", "dashboard"] as ViewKey[]).map((item) => (
+              <button
+                key={item}
+                type="button"
+                onClick={() => setView(item)}
+                className={`h-9 rounded px-3 text-sm font-semibold capitalize transition ${
+                  view === item ? "bg-white text-violet shadow-sm" : "text-muted hover:bg-white/70 hover:text-ink"
+                }`}
+              >
+                {item}
+              </button>
+            ))}
+          </nav>
+          <button
+            type="button"
+            onClick={() => setIsHistoryOpen(true)}
+            className="h-9 rounded-md border border-line bg-white px-3 text-sm font-semibold text-muted transition hover:border-violet/40 hover:text-violet"
+          >
+            History
+          </button>
+          <button
+            type="button"
+            onClick={handleNewSession}
+            className="flex h-9 items-center gap-1.5 rounded-md bg-violet px-3 text-sm font-semibold text-white shadow-brand transition hover:bg-ink"
+          >
+            <PlusIcon className="h-4 w-4" />
+            New session
+          </button>
+        </div>
       </header>
 
-      <div className="flex min-h-[calc(100vh-4rem)]">
-        <HistorySidebar
+      {isHistoryOpen ? (
+        <HistoryDrawer
           sessions={sessions}
           notice={dbNotice}
-          onLoadSession={handleLoadSession}
-          onNewSession={handleNewSession}
+          onClose={() => setIsHistoryOpen(false)}
+          onLoadSession={(session) => {
+            setIsHistoryOpen(false);
+            void handleLoadSession(session);
+          }}
         />
+      ) : null}
 
+      <div className="flex min-h-[calc(100vh-4rem)]">
         <main className="min-w-0 flex-1">
           <div className="flex min-h-[calc(100vh-4rem)]">
             <div className="min-w-0 flex-1">
@@ -715,16 +738,16 @@ export function CrosscastApp() {
   );
 }
 
-function HistorySidebar({
+function HistoryDrawer({
   sessions,
   notice,
+  onClose,
   onLoadSession,
-  onNewSession,
 }: {
   sessions: SessionSummary[];
   notice: string | null;
+  onClose: () => void;
   onLoadSession: (session: SessionSummary) => void;
-  onNewSession: () => void;
 }) {
   const grouped = sessions.reduce<Record<string, SessionSummary[]>>((acc, session) => {
     acc[session.date] = [...(acc[session.date] ?? []), session];
@@ -732,54 +755,50 @@ function HistorySidebar({
   }, {});
 
   return (
-    <aside className="hidden w-64 shrink-0 border-r border-line bg-white/82 p-4 backdrop-blur md:block">
-      <div className="mb-5 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-ink">History</h2>
-        <button
-          type="button"
-          onClick={onNewSession}
-          aria-label="New session"
-          className="rounded-md border border-line p-2 text-muted transition hover:border-violet/40 hover:bg-violet/5 hover:text-violet"
-        >
-          <PlusIcon className="h-4 w-4" />
-        </button>
-      </div>
+    <div className="fixed inset-0 z-50">
+      <button type="button" aria-label="Close history" onClick={onClose} className="absolute inset-0 bg-ink/25" />
+      <aside className="absolute inset-y-0 left-0 flex w-80 flex-col bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-line p-4">
+          <h2 className="text-sm font-semibold text-ink">History</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="rounded-md border border-line px-2.5 py-1.5 text-sm font-semibold text-muted transition hover:border-violet/40 hover:text-violet"
+          >
+            ✕
+          </button>
+        </div>
 
-      {notice ? (
-        <p className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
-          {notice}
-        </p>
-      ) : null}
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          {notice ? (
+            <p className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+              {notice}
+            </p>
+          ) : null}
 
-      <div className="space-y-5">
-        {Object.entries(grouped).map(([date, items]) => (
-          <div key={date}>
-            <p className="mb-2 text-xs font-semibold uppercase text-muted">{date}</p>
-            <div className="space-y-1">
-              {items.map((session) => (
-                <button
-                  key={session.id}
-                  type="button"
-                  onClick={() => onLoadSession(session)}
-                  className="w-full rounded-md px-2 py-2 text-left text-sm leading-5 text-slate-700 transition hover:bg-violet/5 hover:text-ink"
-                >
-                  <span className="block truncate">{session.title}</span>
-                </button>
-              ))}
-            </div>
+          <div className="space-y-5">
+            {Object.entries(grouped).map(([date, items]) => (
+              <div key={date}>
+                <p className="mb-2 text-xs font-semibold uppercase text-muted">{date}</p>
+                <div className="space-y-1">
+                  {items.map((session) => (
+                    <button
+                      key={session.id}
+                      type="button"
+                      onClick={() => onLoadSession(session)}
+                      className="w-full rounded-md px-2 py-2 text-left text-sm leading-5 text-slate-700 transition hover:bg-violet/5 hover:text-ink"
+                    >
+                      <span className="block truncate">{session.title}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
-
-      <button
-        type="button"
-        onClick={onNewSession}
-        className="mt-8 flex h-10 w-full items-center justify-center gap-2 rounded-md bg-violet text-sm font-semibold text-white shadow-brand transition hover:bg-ink"
-      >
-        <PlusIcon className="h-4 w-4" />
-        New Session
-      </button>
-    </aside>
+        </div>
+      </aside>
+    </div>
   );
 }
 
