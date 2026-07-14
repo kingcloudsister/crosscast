@@ -185,8 +185,8 @@ export function AssistantPanel({
             key={message.id}
             className={`whitespace-pre-wrap rounded-lg px-3 py-3 text-sm leading-6 ${
               message.role === "user"
-                ? "ml-8 rounded-tr-sm bg-violet text-white shadow-brand"
-                : "mr-8 rounded-tl-sm bg-canvas text-slate-800"
+                ? "ml-8 rounded-tr-sm bg-[#8bade4] text-ink shadow-brand"
+                : "mr-8 rounded-tl-sm bg-[#d3eafa]/55 text-slate-800"
             }`}
           >
             {message.content || "Thinking..."}
@@ -216,7 +216,7 @@ export function AssistantPanel({
             type="submit"
             disabled={!input.trim() || isStreaming}
             aria-label="Send message"
-            className="rounded-md bg-violet p-2 text-white transition hover:bg-ink disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-md bg-[#8bade4] p-2 text-ink transition hover:bg-[#7a9edb] disabled:cursor-not-allowed disabled:opacity-50"
           >
             <SendIcon className="h-4 w-4" />
           </button>

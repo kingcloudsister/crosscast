@@ -6,7 +6,7 @@ import { CalendarView, DashboardView } from "./calendar-dashboard";
 import { copyToClipboard } from "./clipboard";
 import { CreateView } from "./create-view";
 import { EditorView } from "./editor-view";
-import { PlusIcon } from "./icons";
+import { CalendarIcon, CreateIcon, DashboardIcon, PanelIcon, PlusIcon, SearchIcon } from "./icons";
 import { defaultBrief, fallbackScheduledPosts, fallbackSessions, initialStatuses, sampleGeneration } from "./mock-data";
 import type {
   BriefState,
@@ -23,7 +23,9 @@ import type {
 
 export function CrosscastApp() {
   const [view, setView] = useState<ViewKey>("create");
-  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isSessionsOpen, setIsSessionsOpen] = useState(false);
+  const [lastCreateView, setLastCreateView] = useState<Extract<ViewKey, "create" | "editor">>("create");
+  const [loadingSessionId, setLoadingSessionId] = useState<string | null>(null);
   const [brief, setBrief] = useState<BriefState>(defaultBrief);
   const [sessions, setSessions] = useState<SessionSummary[]>(fallbackSessions);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
@@ -33,6 +35,12 @@ export function CrosscastApp() {
   const [scheduledPosts, setScheduledPosts] = useState<ScheduledPost[]>(fallbackScheduledPosts);
   const [isGenerating, setIsGenerating] = useState(false);
   const [dbNotice, setDbNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (view === "create" || view === "editor") {
+      setLastCreateView(view);
+    }
+  }, [view]);
 
   useEffect(() => {
     let isMounted = true;
@@ -211,6 +219,20 @@ export function CrosscastApp() {
   };
 
   const handleNewSession = async () => {
+    if (currentSessionId && (brief.theme || brief.rawMaterial || brief.additionalContext || brief.images.length > 0)) {
+      const currentSummary: SessionSummary = {
+        id: currentSessionId,
+        date: formatDate(new Date().toISOString()),
+        title: brief.theme || "Untitled brief",
+        brief,
+      };
+      saveLocalSession({
+        ...currentSummary,
+        generation: view === "editor" ? generation : null,
+      });
+      setSessions((items) => [currentSummary, ...items.filter((item) => item.id !== currentSessionId)]);
+    }
+
     setBrief(defaultBrief);
     setIsAssistantOpen(false);
     setView("create");
@@ -624,63 +646,114 @@ export function CrosscastApp() {
     return { postUrl: data.postUrl };
   };
 
-  return (
-    <div className="min-h-screen bg-canvas text-ink">
-      <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-line bg-white/92 px-4 shadow-[0_8px_28px_rgba(8,10,53,0.04)] backdrop-blur sm:px-6">
-        <button
-          type="button"
-          onClick={() => setView("create")}
-          className="flex h-11 items-center rounded-md outline-none transition focus:ring-4 focus:ring-violet/15"
-        >
-          <img src="/crosscast-logo.png" alt="Crosscast" className="h-9 w-auto object-contain" />
-        </button>
-        <div className="flex items-center gap-3">
-          <nav className="flex items-center gap-1 rounded-md border border-line bg-canvas/80 p-1 shadow-sm">
-            {(["create", "calendar", "dashboard"] as ViewKey[]).map((item) => (
-              <button
-                key={item}
-                type="button"
-                onClick={() => setView(item)}
-                className={`h-9 rounded px-3 text-sm font-semibold capitalize transition ${
-                  view === item ? "bg-white text-violet shadow-sm" : "text-muted hover:bg-white/70 hover:text-ink"
-                }`}
-              >
-                {item}
-              </button>
-            ))}
-          </nav>
-          <button
-            type="button"
-            onClick={() => setIsHistoryOpen(true)}
-            className="h-9 rounded-md border border-line bg-white px-3 text-sm font-semibold text-muted transition hover:border-violet/40 hover:text-violet"
-          >
-            History
-          </button>
-          <button
-            type="button"
-            onClick={handleNewSession}
-            className="flex h-9 items-center gap-1.5 rounded-md bg-violet px-3 text-sm font-semibold text-white shadow-brand transition hover:bg-ink"
-          >
-            <PlusIcon className="h-4 w-4" />
-            New session
-          </button>
-        </div>
-      </header>
+  const isCreateArea = view === "create" || view === "editor";
+  const contextualTitle =
+    view === "calendar"
+      ? "Calendar"
+      : view === "dashboard"
+        ? "Dashboard"
+        : brief.theme || (view === "editor" ? "Content editor" : "Untitled brief");
+  const contextualLabel = view === "editor" ? "Create / Editor" : view === "create" ? "Create / Brief" : "Workspace";
 
-      {isHistoryOpen ? (
-        <HistoryDrawer
-          sessions={sessions}
-          notice={dbNotice}
-          onClose={() => setIsHistoryOpen(false)}
-          onLoadSession={(session) => {
-            setIsHistoryOpen(false);
-            void handleLoadSession(session);
-          }}
-        />
+  const navigatePrimary = (target: "create" | "calendar" | "dashboard") => {
+    if (target === "create") {
+      if (isCreateArea) {
+        setIsSessionsOpen((current) => !current);
+      } else {
+        setView(lastCreateView);
+        setIsSessionsOpen(true);
+      }
+      return;
+    }
+
+    setView(target);
+    setIsSessionsOpen(false);
+    setIsAssistantOpen(false);
+  };
+
+  const startNewSession = async () => {
+    setLoadingSessionId("new");
+    setIsSessionsOpen(true);
+    try {
+      await handleNewSession();
+    } finally {
+      setLoadingSessionId(null);
+    }
+  };
+
+  const openSession = async (session: SessionSummary) => {
+    setLoadingSessionId(session.id);
+    try {
+      await handleLoadSession(session);
+    } finally {
+      setLoadingSessionId(null);
+    }
+  };
+
+  return (
+    <div className="flex min-h-screen bg-canvas text-ink">
+      <PrimaryRail activeView={view} isGenerating={isGenerating} onNavigate={navigatePrimary} />
+
+      {isCreateArea && isSessionsOpen ? (
+        <>
+          <button
+            type="button"
+            aria-label="Close sessions"
+            onClick={() => setIsSessionsOpen(false)}
+            className="fixed inset-0 left-[72px] z-30 bg-ink/10 backdrop-blur-[1px] xl:hidden"
+          />
+          <SessionsPanel
+            sessions={sessions}
+            currentSessionId={currentSessionId}
+            notice={dbNotice}
+            loadingSessionId={loadingSessionId}
+            onClose={() => setIsSessionsOpen(false)}
+            onLoadSession={(session) => void openSession(session)}
+            onNewSession={() => void startNewSession()}
+          />
+        </>
       ) : null}
 
-      <div className="flex min-h-[calc(100vh-4rem)]">
-        <main className="min-w-0 flex-1">
+      <div className="min-w-0 flex flex-1 flex-col">
+        <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center justify-between border-b border-line bg-[#fefdf8]/95 px-4 shadow-[0_1px_2px_rgba(44,48,64,0.04)] backdrop-blur sm:px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            {isCreateArea ? (
+              <button
+                type="button"
+                aria-label={isSessionsOpen ? "Hide sessions" : "Show sessions"}
+                onClick={() => setIsSessionsOpen((current) => !current)}
+                className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg border transition ${
+                  isSessionsOpen
+                    ? "border-[#8bade4]/55 bg-[#d3eafa]/75 text-violet"
+                    : "border-line bg-white text-muted hover:border-[#8bade4]/55 hover:text-violet"
+                }`}
+              >
+                <PanelIcon className="h-[18px] w-[18px]" />
+              </button>
+            ) : null}
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#9096b0]">{contextualLabel}</p>
+              <h1 className="truncate text-sm font-semibold text-ink sm:text-[15px]">{contextualTitle}</h1>
+            </div>
+          </div>
+
+          {isCreateArea ? (
+            <button
+              type="button"
+              onClick={() => setIsAssistantOpen((current) => !current)}
+              className={`flex h-9 items-center gap-2 rounded-lg border px-3 text-sm font-semibold transition ${
+                isAssistantOpen
+                  ? "border-[#8bade4]/55 bg-[#d3eafa]/75 text-violet"
+                  : "border-line bg-white text-muted hover:border-[#8bade4]/55 hover:text-violet"
+              }`}
+            >
+              <span aria-hidden="true" className="text-base leading-none">✦</span>
+              <span className="hidden sm:inline">Assistant</span>
+            </button>
+          ) : null}
+        </header>
+
+        <main className="min-h-0 min-w-0 flex-1">
           <div className="flex min-h-[calc(100vh-4rem)]">
             <div className="min-w-0 flex-1">
               {view === "create" ? (
@@ -720,7 +793,7 @@ export function CrosscastApp() {
               ) : null}
             </div>
 
-            {isAssistantOpen && view === "create" ? (
+            {isAssistantOpen && isCreateArea ? (
               <div className="fixed inset-y-0 right-0 z-40 w-full max-w-[390px] pt-16 shadow-2xl lg:static lg:z-auto lg:max-w-none lg:pt-0 lg:shadow-none">
                 <AssistantPanel
                   brief={brief}
@@ -738,36 +811,129 @@ export function CrosscastApp() {
   );
 }
 
-function HistoryDrawer({
+function PrimaryRail({
+  activeView,
+  isGenerating,
+  onNavigate,
+}: {
+  activeView: ViewKey;
+  isGenerating: boolean;
+  onNavigate: (view: "create" | "calendar" | "dashboard") => void;
+}) {
+  const activePrimary = activeView === "editor" ? "create" : activeView;
+  const items = [
+    { key: "create" as const, label: "Create", icon: CreateIcon },
+    { key: "calendar" as const, label: "Calendar", icon: CalendarIcon },
+    { key: "dashboard" as const, label: "Dashboard", icon: DashboardIcon },
+  ];
+
+  return (
+    <aside className="sticky top-0 z-50 flex h-screen w-[72px] shrink-0 flex-col border-r border-line bg-[#fefdf8]">
+      <div className="grid h-16 shrink-0 place-items-center border-b border-line">
+        <button
+          type="button"
+          onClick={() => onNavigate("create")}
+          aria-label="Open Create workspace"
+          className="grid h-10 w-10 place-items-center overflow-hidden rounded-xl bg-[#d3eafa] ring-1 ring-[#8bade4]/30 transition hover:bg-[#c6e2f7] focus:outline-none focus:ring-4 focus:ring-[#8bade4]/20"
+        >
+          <span className="font-serif text-lg font-bold text-[#536a91]">C</span>
+        </button>
+      </div>
+
+      <nav aria-label="Primary navigation" className="flex flex-1 flex-col items-center gap-2 px-2 py-4">
+        {items.map(({ key, label, icon: ItemIcon }) => {
+          const active = activePrimary === key;
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => onNavigate(key)}
+              aria-current={active ? "page" : undefined}
+              className={`relative flex h-[58px] w-14 flex-col items-center justify-center gap-1 rounded-xl text-[10px] font-semibold transition ${
+                active ? "bg-[#d3eafa]/70 text-violet" : "text-[#70778f] hover:bg-[#d3eafa]/40 hover:text-ink"
+              }`}
+            >
+              {active ? <span className="absolute -left-2 top-3 h-8 w-[3px] rounded-r-full bg-[#8bade4]" /> : null}
+              <ItemIcon className="h-5 w-5" />
+              <span>{label}</span>
+            </button>
+          );
+        })}
+      </nav>
+
+      <div className="flex flex-col items-center gap-2 border-t border-line py-4">
+        <span
+          className={`h-2 w-2 rounded-full ${isGenerating ? "animate-pulse bg-[#8bade4]" : "bg-emerald-400"}`}
+          aria-label={isGenerating ? "Generating content" : "Workspace ready"}
+        />
+        <span className="text-[9px] font-semibold text-[#9096b0]">{isGenerating ? "Working" : "Ready"}</span>
+      </div>
+    </aside>
+  );
+}
+
+function SessionsPanel({
   sessions,
+  currentSessionId,
   notice,
+  loadingSessionId,
   onClose,
   onLoadSession,
+  onNewSession,
 }: {
   sessions: SessionSummary[];
+  currentSessionId: string | null;
   notice: string | null;
+  loadingSessionId: string | null;
   onClose: () => void;
   onLoadSession: (session: SessionSummary) => void;
+  onNewSession: () => void;
 }) {
-  const grouped = sessions.reduce<Record<string, SessionSummary[]>>((acc, session) => {
+  const [query, setQuery] = useState("");
+  const filteredSessions = sessions.filter((session) => session.title.toLowerCase().includes(query.trim().toLowerCase()));
+  const grouped = filteredSessions.reduce<Record<string, SessionSummary[]>>((acc, session) => {
     acc[session.date] = [...(acc[session.date] ?? []), session];
     return acc;
   }, {});
 
   return (
-    <div className="fixed inset-0 z-50">
-      <button type="button" aria-label="Close history" onClick={onClose} className="absolute inset-0 bg-ink/25" />
-      <aside className="absolute inset-y-0 left-0 flex w-80 flex-col bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b border-line p-4">
-          <h2 className="text-sm font-semibold text-ink">History</h2>
+    <aside className="fixed inset-y-0 left-[72px] z-40 flex w-72 shrink-0 flex-col border-r border-line bg-[#fefdf8] shadow-2xl xl:sticky xl:top-0 xl:z-30 xl:h-screen xl:shadow-none">
+        <div className="border-b border-line p-4">
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-semibold text-ink">Sessions</h2>
+              <p className="mt-0.5 text-xs text-[#9096b0]">Your recent work</p>
+            </div>
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close"
-            className="rounded-md border border-line px-2.5 py-1.5 text-sm font-semibold text-muted transition hover:border-violet/40 hover:text-violet"
+              aria-label="Hide sessions"
+              className="grid h-8 w-8 place-items-center rounded-lg border border-line bg-white text-sm font-semibold text-muted transition hover:border-violet/40 hover:text-violet"
           >
             ✕
           </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={onNewSession}
+            disabled={loadingSessionId === "new"}
+            className="flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-[#8bade4] text-sm font-semibold text-[#252a3a] shadow-brand transition hover:bg-[#7a9edb] disabled:cursor-wait disabled:opacity-65"
+          >
+            <PlusIcon className="h-4 w-4" />
+            {loadingSessionId === "new" ? "Starting…" : "New session"}
+          </button>
+
+          <label className="mt-3 flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-muted transition focus-within:border-[#8bade4] focus-within:ring-4 focus-within:ring-[#8bade4]/10">
+            <SearchIcon className="h-4 w-4 shrink-0" />
+            <span className="sr-only">Search sessions</span>
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search sessions"
+              className="min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-[#9096b0]"
+            />
+          </label>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
@@ -780,25 +946,41 @@ function HistoryDrawer({
           <div className="space-y-5">
             {Object.entries(grouped).map(([date, items]) => (
               <div key={date}>
-                <p className="mb-2 text-xs font-semibold uppercase text-muted">{date}</p>
+                <p className="mb-2 px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-[#9096b0]">{date}</p>
                 <div className="space-y-1">
-                  {items.map((session) => (
+                  {items.map((session) => {
+                    const active = currentSessionId === session.id;
+                    const loading = loadingSessionId === session.id;
+                    return (
                     <button
                       key={session.id}
                       type="button"
                       onClick={() => onLoadSession(session)}
-                      className="w-full rounded-md px-2 py-2 text-left text-sm leading-5 text-slate-700 transition hover:bg-violet/5 hover:text-ink"
+                        disabled={loading}
+                        className={`relative w-full rounded-lg border-l-[3px] px-3 py-2.5 text-left text-sm leading-5 transition ${
+                          active
+                            ? "border-[#8bade4] bg-[#d3eafa]/70 text-ink"
+                            : "border-transparent text-slate-700 hover:border-[#8bade4]/60 hover:bg-[#d3eafa]/45 hover:text-ink"
+                        } disabled:cursor-wait`}
                     >
-                      <span className="block truncate">{session.title}</span>
+                        <span className="block truncate font-medium">{session.title}</span>
+                        <span className="mt-0.5 block text-[11px] text-[#9096b0]">{loading ? "Opening…" : date}</span>
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             ))}
+
+            {Object.keys(grouped).length === 0 ? (
+              <div className="rounded-xl border border-dashed border-[#9096b0]/40 bg-[#d3eafa]/20 px-4 py-8 text-center">
+                <p className="text-sm font-semibold text-ink">No sessions found</p>
+                <p className="mt-1 text-xs leading-5 text-[#70778f]">Try another search or start a new session.</p>
+              </div>
+            ) : null}
           </div>
         </div>
       </aside>
-    </div>
   );
 }
 

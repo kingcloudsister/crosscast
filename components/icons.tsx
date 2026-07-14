@@ -119,3 +119,55 @@ export function EyeIcon(props: IconProps) {
     </Icon>
   );
 }
+
+export function CreateIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m14 5 5 5" />
+      <path d="M4 20h4l11-11-4-4L4 16v4Z" />
+      <path d="M6 4v3" />
+      <path d="M4.5 5.5h3" />
+    </Icon>
+  );
+}
+
+export function CalendarIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3" y="5" width="18" height="16" rx="2" />
+      <path d="M16 3v4" />
+      <path d="M8 3v4" />
+      <path d="M3 10h18" />
+    </Icon>
+  );
+}
+
+export function DashboardIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3" y="3" width="7" height="7" rx="1.5" />
+      <rect x="14" y="3" width="7" height="12" rx="1.5" />
+      <rect x="3" y="14" width="7" height="7" rx="1.5" />
+      <rect x="14" y="19" width="7" height="2" rx="1" />
+    </Icon>
+  );
+}
+
+export function PanelIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M9 4v16" />
+      <path d="m15 9-3 3 3 3" />
+    </Icon>
+  );
+}
+
+export function SearchIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-4-4" />
+    </Icon>
+  );
+}

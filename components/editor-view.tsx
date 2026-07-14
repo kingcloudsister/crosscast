@@ -209,7 +209,7 @@ function RawMaterialsPanel({ brief }: { brief: BriefState }) {
         </div>
       </div>
 
-      <div className="mt-4 h-1 w-44 rounded-full bg-gradient-to-r from-violet via-coral to-amber" />
+      <div className="mt-4 h-1 w-24 rounded-full bg-[#8bade4]" />
     </div>
   );
 }
@@ -1285,7 +1285,7 @@ function ActionButton({
       disabled={disabled}
       className={`inline-flex h-10 items-center gap-2 rounded-md px-3 text-sm font-semibold transition ${
         strong
-          ? "bg-violet text-white shadow-brand hover:bg-ink disabled:cursor-not-allowed disabled:opacity-60"
+          ? "bg-[#8bade4] text-ink shadow-brand hover:bg-[#7a9edb] disabled:cursor-not-allowed disabled:opacity-60"
           : "border border-line bg-white text-ink hover:border-violet/40 hover:text-violet disabled:cursor-not-allowed disabled:opacity-60"
       }`}
     >

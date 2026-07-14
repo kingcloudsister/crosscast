@@ -42,7 +42,7 @@ export function CreateView({
     <section className="mx-auto w-full max-w-5xl px-6 py-8 lg:px-10">
       <div className="mb-7 flex flex-col gap-2">
         <h1 className="text-2xl font-semibold tracking-normal text-ink">Create New Content</h1>
-        <div className="h-1 w-40 rounded-full bg-gradient-to-r from-[#6842ff] via-[#ff4168] to-[#ffa51f]" />
+        <div className="h-1 w-24 rounded-full bg-[#8bade4]" />
       </div>
 
       <div className="space-y-6">
@@ -123,7 +123,7 @@ export function CreateView({
             type="button"
             onClick={onGenerate}
             disabled={isSaving}
-            className="inline-flex h-12 items-center justify-center gap-2 rounded-md bg-[#6842ff] px-6 text-sm font-semibold text-white shadow-[0_18px_44px_rgba(104,66,255,0.18)] transition hover:bg-ink disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex h-12 items-center justify-center gap-2 rounded-md bg-[#8bade4] px-6 text-sm font-semibold text-ink shadow-brand transition hover:bg-[#7a9edb] disabled:cursor-not-allowed disabled:opacity-60"
           >
             <PlusIcon className="h-4 w-4 rotate-45" />
             {isSaving ? "Generating..." : "Generate"}

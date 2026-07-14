@@ -77,7 +77,7 @@ export function CalendarView({ scheduledPosts, onCopyPost, onViewPost, onRemoveP
         <div>
           <h1 className="text-2xl font-semibold text-ink">Content Calendar</h1>
           <p className="mt-2 text-sm text-muted">Scheduled posts across RedNote, Threads, and LinkedIn.</p>
-          <div className="mt-4 h-1 w-36 rounded-full bg-gradient-to-r from-violet via-teal to-amber" />
+          <div className="mt-4 h-1 w-24 rounded-full bg-[#8bade4]" />
         </div>
         <div className="flex flex-wrap gap-3 text-xs font-semibold text-muted">
           {platformOrder.map((platform) => (
@@ -236,7 +236,7 @@ export function DashboardView({ scheduledPosts, onRemovePost }: DashboardViewPro
       <p className="mt-2 text-sm text-muted">
         This month: {scheduledCount} scheduled{postedCount > 0 ? `, ${postedCount} published` : ""}.
       </p>
-      <div className="mt-4 h-1 w-32 rounded-full bg-gradient-to-r from-violet via-coral to-amber" />
+      <div className="mt-4 h-1 w-24 rounded-full bg-[#8bade4]" />
       {removeError ? (
         <p className="mt-5 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{removeError}</p>
       ) : null}
