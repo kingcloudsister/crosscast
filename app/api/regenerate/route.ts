@@ -2,10 +2,14 @@ import { supabaseAdmin } from "@/lib/supabase-admin";
 import type { BriefState, GeneratedContent, PlatformKey } from "@/components/types";
 import {
   GENERATION_SYSTEM_PROMPT,
+  loadRedNoteSlideSpecPrompt,
   normalizeGenerationPlatforms,
+  normalizePlatformsShape,
   validateGeneration,
 } from "@/lib/generation-utils";
 import { sanitizePlatformContent } from "@/lib/content-sanitizer";
+import { preserveVariantState } from "@/lib/content-variants";
+import type { PlatformContent } from "@/components/types";
 import {
   buildVisionUserContent,
   createOpenRouterChatCompletion,
@@ -64,11 +68,15 @@ export async function POST(request: Request) {
       previousContent: generationRow.content,
       feedback,
     });
-    const content = sanitizePlatformContent(platform, regenerated.platforms[platform]);
+    const sanitized = sanitizePlatformContent(platform, regenerated.platforms[platform]);
 
-    if (!content) {
+    if (!sanitized) {
       throw new Error("OpenRouter did not return regenerated content for the requested platform.");
     }
+    const content = preserveVariantState(
+      generationRow.content as PlatformContent | null,
+      sanitized as PlatformContent,
+    );
 
     const { error } = await supabaseAdmin
       .from("generations")
@@ -185,8 +193,10 @@ async function callOpenRouterForPlatform({
     }),
   );
 
+  // Slide specs roughly double the size of a RedNote response; leave generous headroom
+  // so the JSON never gets truncated mid-object (billed only for tokens actually produced).
   const response = await createOpenRouterChatCompletion({
-    maxTokens: 3000,
+    maxTokens: 10000,
     temperature: 0.7,
     responseFormat: {
       type: "json_object",
@@ -194,7 +204,7 @@ async function callOpenRouterForPlatform({
     messages: [
       {
         role: "system",
-        content: GENERATION_SYSTEM_PROMPT,
+        content: `${GENERATION_SYSTEM_PROMPT}\n\n${loadRedNoteSlideSpecPrompt()}`,
       },
       {
         role: "user",
@@ -211,7 +221,10 @@ async function callOpenRouterForPlatform({
     throw new Error("OpenRouter returned an empty regenerated response.");
   }
 
-  return normalizeGenerationPlatforms(coerceRegeneratedContent(parseJsonFromOpenRouterContent(text), platform, session, previousContent), [platform]);
+  return normalizeGenerationPlatforms(
+    coerceRegeneratedContent(normalizePlatformsShape(parseJsonFromOpenRouterContent(text)), platform, session, previousContent),
+    [platform],
+  );
 }
 
 function coerceRegeneratedContent(
@@ -226,7 +239,17 @@ function coerceRegeneratedContent(
     return validateGeneration(parsed);
   }
 
-  const platformContent = parsed[platform] ?? findPlatformContentByLooseKey(parsed, platform);
+  // A platforms object without contentAnalysis still carries the draft we need.
+  const nestedPlatforms =
+    parsed.platforms && typeof parsed.platforms === "object" && !Array.isArray(parsed.platforms)
+      ? (parsed.platforms as Record<string, unknown>)
+      : null;
+
+  const platformContent =
+    nestedPlatforms?.[platform] ??
+    (nestedPlatforms ? findPlatformContentByLooseKey(nestedPlatforms, platform) : null) ??
+    parsed[platform] ??
+    findPlatformContentByLooseKey(parsed, platform);
   if (platformContent) {
     return {
       contentAnalysis: {

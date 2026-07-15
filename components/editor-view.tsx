@@ -2,27 +2,33 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { normalizeLinkedInPostUrl } from "@/lib/linkedin-url";
+import { getContentVariants, selectContentVariant, syncSelectedVariant } from "@/lib/content-variants";
 import { copyToClipboard } from "./clipboard";
-import { ArrowLeftIcon, CheckIcon, CopyIcon, EditIcon, RefreshIcon } from "./icons";
+import { ArrowLeftIcon, CheckIcon, CopyIcon, RefreshIcon } from "./icons";
 import { platformMeta } from "./mock-data";
 import type {
   BriefState,
   GeneratedContent,
+  PlatformGenerationState,
+  PlatformContent,
   PlatformKey,
   PlatformStatus,
+  PostImage,
   RedNoteContent,
   TextPlatformContent,
   ThreadsContent,
 } from "./types";
 
-type PlatformContent = RedNoteContent | TextPlatformContent | ThreadsContent;
-
 type EditorViewProps = {
   brief: BriefState;
   generation: GeneratedContent;
   statuses: Record<PlatformKey, PlatformStatus>;
+  generationStates: Partial<Record<PlatformKey, PlatformGenerationState>>;
+  generationErrors: Partial<Record<PlatformKey, string>>;
   onBack: () => void;
+  onGeneratePlatform: (platform: PlatformKey) => Promise<void>;
   onSavePlatform: (platform: PlatformKey, content: GeneratedContent["platforms"][PlatformKey]) => Promise<void>;
+  onPatchPlatform: (platform: PlatformKey, content: GeneratedContent["platforms"][PlatformKey]) => void;
   onRegeneratePlatform: (
     platform: PlatformKey,
     feedback: string,
@@ -42,66 +48,193 @@ export function EditorView({
   brief,
   generation,
   statuses,
+  generationStates,
+  generationErrors,
   onBack,
+  onGeneratePlatform,
   onSavePlatform,
+  onPatchPlatform,
   onRegeneratePlatform,
   onApprove,
   onPublishLinkedIn,
 }: EditorViewProps) {
-  const platformsWithContent = platformOrder.filter((platform) => generation.platforms[platform]);
-  const recommendedPlatforms = platformsWithContent.filter((platform) => generation.platforms[platform]?.recommended);
-  const notRecommendedPlatforms = platformsWithContent.filter((platform) => !generation.platforms[platform]?.recommended);
+  const selectedPlatforms = brief.selectedPlatforms.length
+    ? platformOrder.filter((platform) => brief.selectedPlatforms.includes(platform))
+    : platformOrder.filter((platform) => generation.platforms[platform]);
+  const [activePlatform, setActivePlatform] = useState<PlatformKey | null>(null);
+  const [isBriefOpen, setIsBriefOpen] = useState(false);
+  const isAnyPlatformGenerating = selectedPlatforms.some((platform) => generationStates[platform] === "generating");
+  const generatedCount = selectedPlatforms.filter((platform) => generation.platforms[platform]).length;
+
+  // Keep the selected tab stable as individual platform drafts arrive.
+  useEffect(() => {
+    const preferred =
+      selectedPlatforms.find((platform) => generation.platforms[platform]?.recommended) ?? selectedPlatforms[0] ?? null;
+    setActivePlatform((current) => (current && selectedPlatforms.includes(current) ? current : preferred));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brief.selectedPlatforms, generation]);
 
   return (
-    <section className="mx-auto w-full max-w-[1600px] px-6 py-7 lg:px-8">
-      <button
-        type="button"
-        onClick={onBack}
-        className="mb-6 inline-flex items-center gap-2 text-sm font-semibold text-slate-700 transition hover:text-ink"
-      >
-        <ArrowLeftIcon className="h-4 w-4" />
-        Back to Brief
-      </button>
-
-      <RawMaterialsPanel brief={brief} />
-
-      <section>
-        <div className="mb-3 flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
-          <div>
-            <h2 className="text-lg font-semibold text-ink">Platform Comparison</h2>
-            <p className="mt-1 text-sm text-muted">Review RedNote, Threads, and LinkedIn side by side.</p>
-          </div>
-          <span className="text-sm font-medium text-muted">
-            {recommendedPlatforms.length} recommended · {notRecommendedPlatforms.length} alternative
+    <section className="mx-auto w-full max-w-[1320px] px-6 pb-10 pt-5">
+      <div className="mb-7 flex items-center gap-3 rounded-xl border border-line bg-white px-5 py-4 shadow-workspace">
+        <button
+          type="button"
+          onClick={onBack}
+          aria-label="Back to brief"
+          className="shrink-0 text-slate-700 transition hover:text-ink"
+        >
+          <ArrowLeftIcon className="h-4 w-4" />
+        </button>
+        <p className="min-w-0 flex-1 truncate text-sm font-semibold text-ink">{brief.theme || "Untitled brief"}</p>
+        {selectedPlatforms.length ? (
+          <span className="shrink-0 rounded-full bg-[#d3eafa]/55 px-2.5 py-1 text-xs font-semibold text-[#536a91]">
+            {generatedCount} of {selectedPlatforms.length} generated
           </span>
-        </div>
+        ) : null}
+        {brief.images.length ? (
+          <span className="shrink-0 text-xs font-semibold text-muted">{brief.images.length} images</span>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => setIsBriefOpen((open) => !open)}
+          className="shrink-0 rounded-md bg-canvas px-2.5 py-1.5 text-xs font-semibold text-muted transition hover:text-violet"
+        >
+          {isBriefOpen ? "Hide brief ▴" : "View brief ▾"}
+        </button>
+      </div>
 
-        {platformsWithContent.length ? (
-          <div className="grid gap-4 xl:grid-cols-3">
-            {platformsWithContent.map((platform) => {
-              const content = generation.platforms[platform];
-              if (!content) return null;
+      {isBriefOpen ? <RawMaterialsPanel brief={brief} /> : null}
+
+      {selectedPlatforms.length ? (
+        <>
+          <div className="flex gap-2">
+            {selectedPlatforms.map((platform) => {
+              const meta = platformMeta[platform];
+              const isActive = platform === activePlatform;
+              const lifecycle = generationStates[platform] ?? (generation.platforms[platform] ? "generated" : "not_generated");
               return (
-                <PlatformReviewCard
+                <button
                   key={platform}
-                  platform={platform}
-                  content={content}
-                  status={statuses[platform]}
-                  onSavePlatform={onSavePlatform}
-                  onRegeneratePlatform={onRegeneratePlatform}
-                  onApprove={onApprove}
-                  onPublishLinkedIn={onPublishLinkedIn}
-                />
+                  type="button"
+                  onClick={() => setActivePlatform(platform)}
+                  className={`flex flex-1 items-center justify-center gap-2.5 rounded-t-lg px-4 py-3 text-sm transition ${
+                    isActive
+                      ? `border-b-2 bg-white font-bold text-ink ${meta.borderClass}`
+                      : "bg-white/50 font-semibold text-muted hover:bg-white/80 hover:text-ink"
+                  }`}
+                >
+                  <span className={`h-2 w-2 rounded-full ${meta.dot}`} />
+                  {meta.label}
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${platformLifecycleClass(lifecycle, statuses[platform])}`}
+                  >
+                    {platformLifecycleLabel(lifecycle, statuses[platform])}
+                  </span>
+                </button>
               );
             })}
           </div>
-        ) : (
-          <div className="rounded-lg border border-dashed border-line bg-white p-5 text-sm text-muted">
-            No platform drafts were generated for this brief yet.
-          </div>
-        )}
-      </section>
+
+          {selectedPlatforms.map((platform) => {
+            const content = generation.platforms[platform];
+            const lifecycle = generationStates[platform] ?? (content ? "generated" : "not_generated");
+            return (
+              <div key={platform} className={activePlatform === platform ? "block" : "hidden"}>
+                {content ? (
+                  <PlatformReviewCard
+                    platform={platform}
+                    content={content}
+                    status={statuses[platform]}
+                    generationId={generation.generationIds?.[platform] ?? null}
+                    briefImages={brief.images}
+                    onSavePlatform={onSavePlatform}
+                    onPatchPlatform={onPatchPlatform}
+                    onRegeneratePlatform={onRegeneratePlatform}
+                    onApprove={onApprove}
+                    onPublishLinkedIn={onPublishLinkedIn}
+                  />
+                ) : (
+                  <PlatformGenerationCard
+                    platform={platform}
+                    state={lifecycle}
+                    error={generationErrors[platform] ?? null}
+                    disabled={isAnyPlatformGenerating && lifecycle !== "generating"}
+                    onGenerate={() => void onGeneratePlatform(platform)}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </>
+      ) : (
+        <div className="rounded-lg border border-dashed border-line bg-white p-5 text-sm text-muted">
+          No platforms were selected for this brief. Return to the direction step and choose at least one platform.
+        </div>
+      )}
     </section>
+  );
+}
+
+function PlatformGenerationCard({
+  platform,
+  state,
+  error,
+  disabled,
+  onGenerate,
+}: {
+  platform: PlatformKey;
+  state: PlatformGenerationState;
+  error: string | null;
+  disabled: boolean;
+  onGenerate: () => void;
+}) {
+  const meta = platformMeta[platform];
+  const isGenerating = state === "generating";
+  const isRetry = state === "error";
+
+  return (
+    <div className="overflow-hidden rounded-b-2xl border border-line bg-white shadow-workspace">
+      <div className="grid min-h-[420px] place-items-center px-6 py-14 text-center">
+        <div className="max-w-md">
+          <span className={`mx-auto block h-3 w-3 rounded-full ${meta.dot}`} />
+          <p className="mt-5 text-xs font-bold uppercase tracking-[0.16em] text-[#9096b0]">
+            {isRetry ? "Generation interrupted" : isGenerating ? "Creating draft" : "Ready when you are"}
+          </p>
+          <h2 className="mt-2 font-serif text-3xl text-ink">
+            {isRetry ? `Try ${meta.label} again` : isGenerating ? `Writing for ${meta.label}…` : `Generate the ${meta.label} version`}
+          </h2>
+          <p className="mt-3 text-sm leading-6 text-[#70778f]">
+            {isGenerating
+              ? "Crosscast is adapting the confirmed narrative and tone across your selected platforms. You can switch tabs while it works."
+              : `This creates only the ${meta.label} draft. Your other selected platforms will stay unchanged until you generate them.`}
+          </p>
+
+          {error ? (
+            <p className="mt-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm leading-6 text-rose-700">
+              {error}
+            </p>
+          ) : null}
+
+          <button
+            type="button"
+            onClick={onGenerate}
+            disabled={isGenerating || disabled}
+            className="mt-7 inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#8bade4] px-5 text-sm font-semibold text-ink shadow-brand transition hover:bg-[#7a9edb] disabled:cursor-wait disabled:opacity-50"
+          >
+            {isGenerating ? (
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-ink/25 border-t-ink" aria-hidden="true" />
+            ) : isRetry ? (
+              <RefreshIcon className="h-4 w-4" />
+            ) : null}
+            {isGenerating ? `Generating ${meta.label}…` : isRetry ? "Retry generation" : `Generate ${meta.label}`}
+          </button>
+
+          {disabled && !isGenerating ? (
+            <p className="mt-3 text-xs text-[#9096b0]">Finish the platform currently generating before starting another.</p>
+          ) : null}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -163,7 +296,7 @@ function RawMaterialsPanel({ brief }: { brief: BriefState }) {
         </div>
       </div>
 
-      <div className="mt-4 h-1 w-44 rounded-full bg-gradient-to-r from-violet via-coral to-amber" />
+      <div className="mt-4 h-1 w-24 rounded-full bg-[#8bade4]" />
     </div>
   );
 }
@@ -172,7 +305,10 @@ function PlatformReviewCard({
   platform,
   content,
   status,
+  generationId,
+  briefImages,
   onSavePlatform,
+  onPatchPlatform,
   onRegeneratePlatform,
   onApprove,
   onPublishLinkedIn,
@@ -180,7 +316,10 @@ function PlatformReviewCard({
   platform: PlatformKey;
   content: PlatformContent;
   status: PlatformStatus;
+  generationId: string | null;
+  briefImages: BriefState["images"];
   onSavePlatform: (platform: PlatformKey, content: GeneratedContent["platforms"][PlatformKey]) => Promise<void>;
+  onPatchPlatform: (platform: PlatformKey, content: GeneratedContent["platforms"][PlatformKey]) => void;
   onRegeneratePlatform: (
     platform: PlatformKey,
     feedback: string,
@@ -189,7 +328,6 @@ function PlatformReviewCard({
   onApprove: (platform: PlatformKey, scheduledAt?: string, contentOverride?: PlatformContent) => Promise<void>;
   onPublishLinkedIn: (contentOverride?: TextPlatformContent) => Promise<{ postUrl: string }>;
 }) {
-  const [expandedSlide, setExpandedSlide] = useState<number>(1);
   const [isEditing, setIsEditing] = useState(false);
   const [draftContent, setDraftContent] = useState<PlatformContent | null>(null);
   const [selectedTitleIndex, setSelectedTitleIndex] = useState(() =>
@@ -206,11 +344,14 @@ function PlatformReviewCard({
   const [linkedInPostUrl, setLinkedInPostUrl] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "selected">("idle");
   const [copyFallbackText, setCopyFallbackText] = useState<string | null>(null);
+  const [isSelectingVariant, setIsSelectingVariant] = useState(false);
   const [scheduleDateTime, setScheduleDateTime] = useState(() => getSuggestedPostingRecommendation(platform).dateTime);
   const [error, setError] = useState<string | null>(null);
   const scheduleInputRef = useRef<HTMLInputElement | null>(null);
+  const editingBaselineRef = useRef<string | null>(null);
+  const pendingSaveRef = useRef<Promise<void> | null>(null);
 
-  const displayedContent = (isEditing && draftContent ? draftContent : content) as PlatformContent;
+  const displayedContent = ((isEditing || isSaving) && draftContent ? draftContent : content) as PlatformContent;
   const selectedContent =
     platform === "rednote"
       ? withSelectedRedNoteTitle(displayedContent as RedNoteContent, selectedTitleIndex)
@@ -221,7 +362,7 @@ function PlatformReviewCard({
   const isRecommended = displayedContent.recommended;
   const recommendedReason = getRecommendedReason(platform, displayedContent);
   const postingRecommendation = useMemo(() => getSuggestedPostingRecommendation(platform), [platform]);
-
+  const variants = getContentVariants(content);
   useEffect(() => {
     setIsEditing(false);
     setDraftContent(null);
@@ -240,6 +381,7 @@ function PlatformReviewCard({
     );
     setScheduleDateTime(getSuggestedPostingRecommendation(platform).dateTime);
     setError(null);
+    editingBaselineRef.current = null;
   }, [platform, content]);
 
   const copyText = useMemo(() => getPlatformCopy(platform, selectedContent), [selectedContent, platform]);
@@ -262,34 +404,48 @@ function PlatformReviewCard({
   };
 
   const startEditing = () => {
-    setDraftContent(cloneContent(selectedContent));
+    const nextDraft = cloneContent(selectedContent);
+    editingBaselineRef.current = JSON.stringify(nextDraft);
+    setDraftContent(nextDraft);
     setIsEditing(true);
     setError(null);
   };
 
-  const cancelEditing = () => {
-    setDraftContent(null);
-    setIsEditing(false);
-    setError(null);
-  };
-
   const saveEditing = async () => {
-    if (!draftContent) return;
+    if (!draftContent || isSaving) return;
+
+    const pendingContent = cloneContent(draftContent);
+    const hasChanges = JSON.stringify(pendingContent) !== editingBaselineRef.current;
+
+    setIsEditing(false);
+    editingBaselineRef.current = null;
+
+    if (!hasChanges) {
+      setDraftContent(null);
+      return;
+    }
+
     setIsSaving(true);
     setError(null);
+    const savePromise = onSavePlatform(platform, pendingContent);
+    pendingSaveRef.current = savePromise.catch(() => undefined);
+
     try {
-      await onSavePlatform(platform, draftContent);
+      await savePromise;
       if (platform === "rednote") {
-        setSelectedTitleIndex(getSelectedRedNoteTitleIndex(draftContent as RedNoteContent));
+        setSelectedTitleIndex(getSelectedRedNoteTitleIndex(pendingContent as RedNoteContent));
       } else if (platform === "threads") {
-        setSelectedThreadsTopic(getSelectedThreadsTopic(draftContent as ThreadsContent));
+        setSelectedThreadsTopic(getSelectedThreadsTopic(pendingContent as ThreadsContent));
       }
-      setIsEditing(false);
       setDraftContent(null);
     } catch (caughtError) {
       const message = caughtError instanceof Error ? caughtError.message : "Could not save edits.";
+      editingBaselineRef.current = JSON.stringify(content);
+      setDraftContent(pendingContent);
+      setIsEditing(true);
       setError(message);
     } finally {
+      pendingSaveRef.current = null;
       setIsSaving(false);
     }
   };
@@ -318,12 +474,31 @@ function PlatformReviewCard({
     setIsRegeneratingPlatform(true);
     setError(null);
     try {
+      await pendingSaveRef.current;
       await onRegeneratePlatform(platform, defaultRegenerationFeedback);
     } catch (caughtError) {
       const message = caughtError instanceof Error ? caughtError.message : "Could not regenerate content.";
       setError(message);
     } finally {
       setIsRegeneratingPlatform(false);
+    }
+  };
+
+  const chooseVariant = async (variantId: string) => {
+    if (variantId === content.selectedVariantId || isSelectingVariant) {
+      return;
+    }
+
+    setIsSelectingVariant(true);
+    setError(null);
+    try {
+      await pendingSaveRef.current;
+      const selectionSource = draftContent ? syncSelectedVariant(draftContent) : content;
+      await onSavePlatform(platform, selectContentVariant(selectionSource, variantId));
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "Could not select this variant.");
+    } finally {
+      setIsSelectingVariant(false);
     }
   };
 
@@ -377,20 +552,105 @@ function PlatformReviewCard({
     }
   };
 
+  const contentActions = (
+    <div className="flex flex-wrap items-center justify-end gap-1.5">
+      <ContentFieldAction
+        icon={<CopyIcon className="h-3.5 w-3.5" />}
+        label={copyStatus === "copied" ? "Copied" : copyStatus === "selected" ? "Selected" : "Copy"}
+        onClick={handleCopy}
+      />
+      <ContentFieldAction
+        icon={<RefreshIcon className="h-3.5 w-3.5" />}
+        label={isRegeneratingPlatform ? "Regenerating…" : "Regenerate"}
+        onClick={regeneratePlatformDraft}
+        disabled={isRegeneratingPlatform}
+      />
+      {isSaving ? (
+        <span aria-live="polite" className="px-1 text-xs font-semibold text-[#9096b0]">
+          Saving…
+        </span>
+      ) : null}
+    </div>
+  );
+
+  const platformDraftPanel = isRecommended ? (
+    platform === "rednote" ? (
+      <RedNotePanel
+        content={displayedContent as RedNoteContent}
+        isEditing={isEditing}
+        selectedTitleIndex={selectedTitleIndex}
+        generationId={generationId}
+        briefImages={briefImages}
+        contentActions={contentActions}
+        onBeginEdit={isSaving ? undefined : startEditing}
+        onCommit={() => void saveEditing()}
+        onSelectTitle={selectRedNoteTitle}
+        onChange={(next) => (isEditing ? setDraftContent(next) : onPatchPlatform("rednote", next))}
+        onSlideRevised={(slideNumber, spec, slideImage) => {
+          const base = content as RedNoteContent;
+          onPatchPlatform("rednote", {
+            ...base,
+            carouselSlides: base.carouselSlides.map((slide) =>
+              slide.slideNumber === slideNumber ? { ...slide, spec } : slide,
+            ),
+            slideImages: (base.slideImages ?? []).map((item) =>
+              item.slideNumber === slideNumber ? slideImage : item,
+            ),
+          });
+        }}
+        onRendered={(slideImages, backgrounds) => {
+          const base = content as RedNoteContent;
+          const backgroundBySlide = new Map(backgrounds.map((item) => [item.slideNumber, item.url]));
+          onPatchPlatform("rednote", {
+            ...base,
+            slideImages,
+            carouselSlides: base.carouselSlides.map((slide) => {
+              const url = backgroundBySlide.get(slide.slideNumber);
+              if (!url || !slide.spec) return slide;
+              return {
+                ...slide,
+                spec: { ...slide.spec, background: { ...slide.spec.background, generatedUrl: url } },
+              };
+            }),
+          });
+        }}
+      />
+    ) : (
+      <TextPlatformPanel
+        content={displayedContent as TextPlatformContent}
+        isEditing={isEditing}
+        platform={platform}
+        selectedThreadsTopic={selectedThreadsTopic}
+        contentActions={contentActions}
+        onBeginEdit={isSaving ? undefined : startEditing}
+        onCommit={() => void saveEditing()}
+        onSelectThreadsTopic={selectThreadsTopic}
+        onChange={setDraftContent}
+      />
+    )
+  ) : (
+    <div className="rounded-md border border-dashed border-line bg-canvas px-3 py-4 text-sm leading-6 text-muted">
+      No draft was generated for this platform because it is not recommended for this brief. Use Generate anyway to
+      create a post for this platform.
+    </div>
+  );
+
+  const linkedInImagePanel =
+    isRecommended && platform === "linkedin" && "content" in displayedContent ? (
+      <LinkedInImageSection
+        content={content as TextPlatformContent}
+        postText={(displayedContent as TextPlatformContent).content}
+        generationId={generationId}
+        briefImages={briefImages}
+        onImageChange={(image) => onPatchPlatform("linkedin", { ...(content as TextPlatformContent), image })}
+      />
+    ) : null;
+
   return (
-    <div className="flex max-h-none min-h-[38rem] flex-col rounded-lg border border-line bg-white shadow-workspace xl:max-h-[calc(100vh-15rem)]">
-      <div className="flex shrink-0 flex-col justify-between gap-3 border-b border-line p-4 sm:flex-row sm:items-start">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className={`h-2.5 w-2.5 rounded-full ${meta.dot}`} />
-            <h3 className="text-lg font-semibold text-ink">{meta.label}</h3>
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <span className="w-fit rounded-md border border-line bg-canvas px-2.5 py-1 text-xs font-semibold text-slate-700">
-            {statusLabel(status)}
-          </span>
-          {!isRecommended ? (
+    <div className="rounded-b-lg rounded-tr-lg border border-line bg-white shadow-workspace">
+      <div className="p-6">
+        {!isRecommended ? (
+          <div className="mb-4 flex justify-end">
             <button
               type="button"
               onClick={generateAnyway}
@@ -399,11 +659,8 @@ function PlatformReviewCard({
             >
               {isGeneratingAnyway ? "Generating..." : "Generate anyway"}
             </button>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          </div>
+        ) : null}
         {!isRecommended && displayedContent.skipReason ? (
           <div className="mb-4 rounded-md border border-amber/30 bg-amber/10 px-3 py-2 text-sm leading-6 text-ink">
             {cleanInternalWorkflowPhrases(displayedContent.skipReason)}
@@ -416,32 +673,34 @@ function PlatformReviewCard({
           </div>
         ) : null}
 
-        {isRecommended ? (
-          platform === "rednote" ? (
-            <RedNotePanel
-              content={displayedContent as RedNoteContent}
-              expandedSlide={expandedSlide}
-              isEditing={isEditing}
-              selectedTitleIndex={selectedTitleIndex}
-              onExpandSlide={setExpandedSlide}
-              onSelectTitle={selectRedNoteTitle}
-              onChange={setDraftContent}
+        {isRecommended && variants.length > 1 ? (
+          <div className="grid items-start gap-5 lg:grid-cols-[17rem_minmax(0,1fr)]">
+            <VariantRail
+              content={content}
+              isSaving={isSelectingVariant || isSaving}
+              onChoose={(variantId) => void chooseVariant(variantId)}
             />
-          ) : (
-            <TextPlatformPanel
-              content={displayedContent as TextPlatformContent}
-              isEditing={isEditing}
-              platform={platform}
-              selectedThreadsTopic={selectedThreadsTopic}
-              onSelectThreadsTopic={selectThreadsTopic}
-              onChange={setDraftContent}
-            />
-          )
-        ) : (
-          <div className="rounded-md border border-dashed border-line bg-canvas px-3 py-4 text-sm leading-6 text-muted">
-            No draft was generated for this platform because it is not recommended for this brief. Use Generate anyway to
-            create a post for this platform.
+            <section className="min-w-0 rounded-xl border border-line bg-white p-5 shadow-[0_8px_26px_rgba(67,75,99,0.07)]">
+              <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#9096b0]">Full draft</p>
+                  <h2 className="mt-1 text-base font-bold text-ink">
+                    {variants.find((variant) => variant.id === content.selectedVariantId)?.label ?? "Working draft"}
+                  </h2>
+                </div>
+                <span className="rounded-full bg-[#d3eafa]/65 px-2.5 py-1 text-xs font-semibold text-[#536a91]">
+                  Editing this version
+                </span>
+              </div>
+              {platformDraftPanel}
+              {linkedInImagePanel}
+            </section>
           </div>
+        ) : (
+          <>
+            {platformDraftPanel}
+            {linkedInImagePanel}
+          </>
         )}
 
         {error ? (
@@ -470,83 +729,132 @@ function PlatformReviewCard({
       </div>
 
       {isRecommended ? (
-        <div className="flex shrink-0 flex-wrap gap-2 border-t border-line p-4">
-          <ActionButton
-            icon={<CopyIcon className="h-4 w-4" />}
-            label={copyStatus === "copied" ? "Copied" : copyStatus === "selected" ? "Selected" : "Copy"}
-            onClick={handleCopy}
-          />
-          {isEditing ? (
-            <>
-              <ActionButton label={isSaving ? "Saving..." : "Save"} onClick={saveEditing} disabled={isSaving} strong />
-              <ActionButton label="Cancel" onClick={cancelEditing} disabled={isSaving} />
-            </>
-          ) : (
-            <ActionButton icon={<EditIcon className="h-4 w-4" />} label="Edit" onClick={startEditing} />
-          )}
-          <ActionButton
-            icon={<RefreshIcon className="h-4 w-4" />}
-            label={isRegeneratingPlatform ? "Regenerating..." : "Regenerate"}
-            onClick={regeneratePlatformDraft}
-            disabled={isRegeneratingPlatform}
-          />
-          <ActionButton
-            icon={<CheckIcon className="h-4 w-4" />}
-            label={isApproving ? "Approving..." : status === "posted" ? "Posted" : status === "approved" ? "Approved" : "Approve + Schedule"}
-            onClick={approvePost}
-            disabled={isApproving || status === "posted"}
-            strong
-          />
-          {platform === "linkedin" && (status === "approved" || status === "posted") ? (
-            <ActionButton
-              label={
-                isPublishingLinkedIn ? "Posting..." : status === "posted" || linkedInPostUrl ? "Posted to LinkedIn" : "Post to LinkedIn"
-              }
-              onClick={publishLinkedInPost}
-              disabled={isPublishingLinkedIn || status === "posted" || Boolean(linkedInPostUrl)}
-              strong
-            />
-          ) : null}
-        </div>
-      ) : null}
-
-      {isRecommended ? (
-        <div className="mx-4 mb-4 shrink-0 rounded-md border border-line bg-canvas p-3">
-          <label className="block text-sm font-semibold text-ink">
-            Suggested date & time
+        <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-end gap-2 rounded-b-lg border-t border-line bg-white/95 px-6 py-3 backdrop-blur">
+          <div className="flex flex-wrap items-center gap-2">
             <input
               ref={scheduleInputRef}
               type="datetime-local"
               value={scheduleDateTime}
               onChange={(event) => setScheduleDateTime(event.target.value)}
-              className="mt-2 block h-10 w-full rounded-md border border-line bg-white px-3 text-sm font-medium text-ink outline-none focus:border-violet/50 focus:ring-4 focus:ring-violet/10"
+              title={postingRecommendation.reason}
+              className="h-10 rounded-md border border-line bg-canvas px-3 text-sm font-medium text-ink outline-none focus:border-violet/50 focus:ring-4 focus:ring-violet/10"
             />
-          </label>
-          <p className="mt-2 text-sm leading-6 text-muted">{postingRecommendation.reason}</p>
+            <ActionButton
+              icon={<CheckIcon className="h-4 w-4" />}
+              label={isApproving ? "Approving..." : status === "posted" ? "Posted" : status === "approved" ? "Approved" : "Approve + Schedule"}
+              onClick={approvePost}
+              disabled={isApproving || status === "posted"}
+              strong
+            />
+            {platform === "linkedin" && (status === "approved" || status === "posted") ? (
+              <ActionButton
+                label={
+                  isPublishingLinkedIn ? "Posting..." : status === "posted" || linkedInPostUrl ? "Posted to LinkedIn" : "Post to LinkedIn"
+                }
+                onClick={publishLinkedInPost}
+                disabled={isPublishingLinkedIn || status === "posted" || Boolean(linkedInPostUrl)}
+                strong
+              />
+            ) : null}
+          </div>
         </div>
       ) : null}
     </div>
   );
 }
 
+function VariantRail({
+  content,
+  isSaving,
+  onChoose,
+}: {
+  content: PlatformContent;
+  isSaving: boolean;
+  onChoose: (variantId: string) => void;
+}) {
+  const variants = getContentVariants(content);
+  const recommendedVariantId = content.recommendedVariantId ?? variants[0]?.id;
+  const selectedVariantId = content.selectedVariantId ?? recommendedVariantId;
+
+  return (
+    <aside className="rounded-xl border border-[#8bade4]/30 bg-[#f7faff] p-3 lg:sticky lg:top-20">
+      <div className="px-1 pb-3">
+        <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#6f89b4]">Variants</p>
+        <p className="mt-1 text-xs leading-5 text-muted">Choose a tone and structure. The full draft updates on the right.</p>
+      </div>
+      <div className="grid gap-2.5 sm:grid-cols-3 lg:grid-cols-1">
+        {variants.map((variant, index) => {
+          const isSelected = variant.id === selectedVariantId;
+          const isRecommended = variant.id === recommendedVariantId;
+          return (
+            <button
+              key={variant.id}
+              type="button"
+              aria-pressed={isSelected}
+              disabled={isSaving}
+              onClick={() => onChoose(variant.id)}
+              className={`group min-h-32 rounded-lg border p-3 text-left transition disabled:cursor-wait disabled:opacity-70 ${
+                isSelected
+                  ? "border-[#8bade4] bg-white shadow-[0_5px_16px_rgba(83,106,145,0.12)] ring-2 ring-[#8bade4]/15"
+                  : "border-line bg-white/80 hover:border-[#8bade4]/65 hover:bg-white"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#9096b0]">
+                  Variant {String.fromCharCode(65 + index)}
+                </span>
+                {isSelected ? <span className="text-xs font-bold text-[#6f89b4]">✓</span> : null}
+              </div>
+              <p className="mt-1.5 text-sm font-bold leading-5 text-ink">{variant.label}</p>
+              <p className="mt-1.5 text-xs leading-5 text-muted">{variant.rationale}</p>
+              {isRecommended ? (
+                <span className="mt-2 inline-flex rounded-full bg-[#d3eafa] px-2 py-0.5 text-[10px] font-bold text-[#536a91]">
+                  Crosscast recommends
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+    </aside>
+  );
+}
+
 function RedNotePanel({
   content,
-  expandedSlide,
   isEditing,
   selectedTitleIndex,
-  onExpandSlide,
+  generationId,
+  briefImages,
+  contentActions,
+  onBeginEdit,
+  onCommit,
   onSelectTitle,
   onChange,
+  onSlideRevised,
+  onRendered,
 }: {
   content: RedNoteContent;
-  expandedSlide: number;
   isEditing: boolean;
   selectedTitleIndex: number;
-  onExpandSlide: (slide: number) => void;
+  generationId: string | null;
+  briefImages: BriefState["images"];
+  contentActions: React.ReactNode;
+  onBeginEdit?: () => void;
+  onCommit: () => void;
   onSelectTitle: (index: number) => void;
   onChange: (content: RedNoteContent) => void;
+  onSlideRevised: (
+    slideNumber: number,
+    spec: NonNullable<RedNoteContent["carouselSlides"][number]["spec"]>,
+    slideImage: NonNullable<RedNoteContent["slideImages"]>[number],
+  ) => void;
+  onRendered: (
+    slideImages: NonNullable<RedNoteContent["slideImages"]>,
+    backgrounds: Array<{ slideNumber: number; url: string }>,
+  ) => void;
 }) {
-  const activeSlide = content.carouselSlides.find((slide) => slide.slideNumber === expandedSlide);
+  const [showTitleOptions, setShowTitleOptions] = useState(false);
   const displayedAngle = cleanInternalWorkflowPhrases(content.angle);
   const titleOptions = getRedNoteTitleOptions(content);
   const selectedIndex = normalizeTitleIndex(selectedTitleIndex, titleOptions);
@@ -573,48 +881,54 @@ function RedNotePanel({
         label="Angle"
         value={displayedAngle}
         rows={2}
-        isEditing={isEditing}
+        isEditing={false}
         onChange={(value) => onChange({ ...content, angle: cleanInternalWorkflowPhrases(value) })}
       />
       {hasGeneratedTitleOptions ? (
         <div>
-          <p className="mb-2 block text-sm font-semibold text-ink">Title Options</p>
-          <div className="space-y-2">
-            {titleOptions.map((title, index) => {
-              const selected = index === selectedIndex;
-              return (
-                <button
-                  type="button"
-                  key={`${title}-${index}`}
-                  onClick={() => onSelectTitle(index)}
-                  className={`w-full rounded-md border px-3 py-2 text-left text-sm leading-6 transition ${
-                    selected
-                      ? "border-rednote bg-coral/10 text-ink ring-4 ring-coral/15"
-                      : "border-line bg-white text-ink hover:border-violet/40"
-                  }`}
-                >
-                  <span className="mb-1 block text-xs font-semibold uppercase text-muted">Option {index + 1}</span>
-                  <span className="block">{title}</span>
-                </button>
-              );
-            })}
+          <div className="mb-2 flex items-center justify-between">
+            <p className="block text-sm font-semibold text-ink">Title</p>
+            <button
+              type="button"
+              onClick={() => setShowTitleOptions((open) => !open)}
+              className="text-xs font-semibold text-violet transition hover:underline"
+            >
+              {showTitleOptions ? "Hide options" : `${titleOptions.length - 1} more options`}
+            </button>
           </div>
-          <div className="mt-3">
-            <EditableBlock
-              label="Selected title"
-              value={titleOptions[selectedIndex] ?? ""}
-              rows={1}
-              isEditing={isEditing}
-              onChange={updateSelectedTitle}
-            />
-          </div>
+          <p className="text-xl font-bold leading-7 text-ink">{titleOptions[selectedIndex] ?? ""}</p>
+          {showTitleOptions ? (
+            <div className="mt-3 space-y-2">
+              {titleOptions.map((title, index) => {
+                const selected = index === selectedIndex;
+                return (
+                  <button
+                    type="button"
+                    key={`${title}-${index}`}
+                    onClick={() => {
+                      onSelectTitle(index);
+                      setShowTitleOptions(false);
+                    }}
+                    className={`w-full rounded-md border px-3 py-2 text-left text-sm leading-6 transition ${
+                      selected
+                        ? "border-rednote bg-coral/10 text-ink ring-4 ring-coral/15"
+                        : "border-line bg-white text-ink hover:border-violet/40"
+                    }`}
+                  >
+                    <span className="mb-1 block text-xs font-semibold uppercase text-muted">Option {index + 1}</span>
+                    <span className="block">{title}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
         </div>
       ) : (
         <EditableBlock
           label="Title"
           value={titleOptions[selectedIndex] ?? ""}
           rows={1}
-          isEditing={isEditing}
+          isEditing={false}
           onChange={updateSelectedTitle}
         />
       )}
@@ -623,70 +937,292 @@ function RedNotePanel({
         value={content.caption}
         rows={7}
         isEditing={isEditing}
+        actions={contentActions}
+        onBeginEdit={onBeginEdit}
+        onBlur={onCommit}
+        autoFocus
         onChange={(value) => onChange({ ...content, caption: value })}
       />
 
-      <div>
-        <p className="mb-3 text-sm font-semibold text-ink">Carousel Slides</p>
-        <div className="flex flex-wrap gap-2">
-          {content.carouselSlides.map((slide) => (
-            <button
-              type="button"
-              key={slide.slideNumber}
-              onClick={() => onExpandSlide(slide.slideNumber)}
-              className={`flex h-16 w-16 items-center justify-center rounded-md border text-sm font-semibold transition ${
-                expandedSlide === slide.slideNumber
-                  ? "border-rednote bg-coral/10 text-rednote ring-4 ring-coral/15"
-                  : "border-line bg-white text-slate-700 hover:border-violet/40 hover:text-violet"
-              }`}
-            >
-              {slide.slideNumber}
-            </button>
-          ))}
-        </div>
-        {activeSlide ? (
-          <div className="mt-3 rounded-md border border-line bg-canvas p-4">
-            {isEditing ? (
-              <div className="space-y-3">
-                <EditableBlock
-                  label="Slide Content"
-                  value={activeSlide.content}
-                  rows={3}
-                  isEditing
-                  onChange={(value) =>
-                    onChange({
-                      ...content,
-                      carouselSlides: content.carouselSlides.map((slide) =>
-                        slide.slideNumber === activeSlide.slideNumber ? { ...slide, content: value } : slide,
-                      ),
-                    })
-                  }
-                />
-                <EditableBlock
-                  label="Design Note"
-                  value={activeSlide.designNote}
-                  rows={3}
-                  isEditing
-                  onChange={(value) =>
-                    onChange({
-                      ...content,
-                      carouselSlides: content.carouselSlides.map((slide) =>
-                        slide.slideNumber === activeSlide.slideNumber ? { ...slide, designNote: value } : slide,
-                      ),
-                    })
-                  }
-                />
-              </div>
-            ) : (
-              <>
-                <p className="text-sm font-semibold text-ink">{activeSlide.content}</p>
-                <p className="mt-2 text-sm leading-6 text-muted">{activeSlide.designNote}</p>
-              </>
-            )}
-          </div>
+      <CarouselSection
+        content={content}
+        generationId={generationId}
+        briefImages={briefImages}
+        onChange={onChange}
+        onRendered={onRendered}
+        onSlideRevised={onSlideRevised}
+      />
+    </div>
+  );
+}
+
+function updateSlideSpecText(
+  content: RedNoteContent,
+  slideNumber: number,
+  patch: Partial<NonNullable<RedNoteContent["carouselSlides"][number]["spec"]>["text"]>,
+): RedNoteContent {
+  return {
+    ...content,
+    carouselSlides: content.carouselSlides.map((slide) =>
+      slide.slideNumber === slideNumber && slide.spec
+        ? { ...slide, spec: { ...slide.spec, text: { ...slide.spec.text, ...patch } } }
+        : slide,
+    ),
+  };
+}
+
+// The carousel is the real RedNote deliverable: one strip of images, one button,
+// and everything per-slide happens on the selected image (comment, download,
+// background, and a tucked-away direct text editor).
+function CarouselSection({
+  content,
+  generationId,
+  briefImages,
+  onChange,
+  onRendered,
+  onSlideRevised,
+}: {
+  content: RedNoteContent;
+  generationId: string | null;
+  briefImages: BriefState["images"];
+  onChange: (content: RedNoteContent) => void;
+  onRendered: (
+    slideImages: NonNullable<RedNoteContent["slideImages"]>,
+    backgrounds: Array<{ slideNumber: number; url: string }>,
+  ) => void;
+  onSlideRevised: (
+    slideNumber: number,
+    spec: NonNullable<RedNoteContent["carouselSlides"][number]["spec"]>,
+    slideImage: NonNullable<RedNoteContent["slideImages"]>[number],
+  ) => void;
+}) {
+  const [selectedSlide, setSelectedSlide] = useState<number | null>(null);
+  const [comment, setComment] = useState("");
+  const [isBusy, setIsBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const renderableSlides = content.carouselSlides.filter((slide) => slide.spec?.text?.title);
+  const slideImages = content.slideImages ?? [];
+  const activeSlide =
+    selectedSlide !== null ? content.carouselSlides.find((slide) => slide.slideNumber === selectedSlide) : null;
+  const activeImage =
+    selectedSlide !== null ? slideImages.find((item) => item.slideNumber === selectedSlide) : null;
+
+  const renderSlides = async (regenerateBackgrounds: number[] = []) => {
+    if (!generationId) {
+      setError("Generate or load a saved RedNote post before rendering images.");
+      return;
+    }
+
+    setIsBusy(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/rednote/render", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          generationId,
+          slides: renderableSlides.map((slide) => ({ slideNumber: slide.slideNumber, spec: slide.spec })),
+          images: briefImages,
+          regenerateBackgrounds,
+        }),
+      });
+      const data = (await response.json()) as {
+        slideImages?: RedNoteContent["slideImages"];
+        backgrounds?: Array<{ slideNumber: number; url: string }>;
+        error?: string;
+      };
+
+      if (!response.ok || !data.slideImages) {
+        throw new Error(data.error ?? "Could not generate the carousel images.");
+      }
+
+      onRendered(data.slideImages, data.backgrounds ?? []);
+    } catch (caughtError) {
+      const message = caughtError instanceof Error ? caughtError.message : "Could not generate the carousel images.";
+      setError(message);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const applyComment = async () => {
+    if (!generationId || selectedSlide === null || !activeSlide?.spec || !comment.trim()) return;
+
+    setIsBusy(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/rednote/slide-feedback", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          generationId,
+          slideNumber: selectedSlide,
+          spec: activeSlide.spec,
+          comment: comment.trim(),
+          images: briefImages,
+        }),
+      });
+      const data = (await response.json()) as {
+        spec?: NonNullable<RedNoteContent["carouselSlides"][number]["spec"]>;
+        slideImage?: NonNullable<RedNoteContent["slideImages"]>[number];
+        error?: string;
+      };
+
+      if (!response.ok || !data.spec || !data.slideImage) {
+        throw new Error(data.error ?? "Could not update the slide.");
+      }
+
+      onSlideRevised(selectedSlide, data.spec, data.slideImage);
+      setComment("");
+    } catch (caughtError) {
+      const message = caughtError instanceof Error ? caughtError.message : "Could not update the slide.";
+      setError(message);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  return (
+    <div>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <p className="text-sm font-semibold text-ink">Carousel</p>
+        {renderableSlides.length ? (
+          <ActionButton
+            icon={<RefreshIcon className="h-4 w-4" />}
+            label={
+              isBusy
+                ? "Working..."
+                : slideImages.length
+                  ? "Re-render all"
+                  : `Generate images (${renderableSlides.length})`
+            }
+            onClick={() => renderSlides()}
+            disabled={isBusy}
+            strong={!slideImages.length}
+          />
         ) : null}
       </div>
 
+      {!renderableSlides.length ? (
+        <p className="rounded-md border border-dashed border-line bg-white px-3 py-3 text-sm leading-6 text-muted">
+          This draft has no renderable slides yet. Regenerate the RedNote draft to get them.
+        </p>
+      ) : !slideImages.length ? (
+        <p className="rounded-md border border-dashed border-line bg-white px-3 py-3 text-sm leading-6 text-muted">
+          {renderableSlides.length} slides ready. Generate the images, then click any image to tweak it.
+        </p>
+      ) : (
+        <div className="flex gap-3 overflow-x-auto pb-2">
+          {slideImages.map((slide) => (
+            <button
+              type="button"
+              key={slide.slideNumber}
+              onClick={() => {
+                setSelectedSlide(selectedSlide === slide.slideNumber ? null : slide.slideNumber);
+                setComment("");
+              }}
+              className={`w-40 shrink-0 overflow-hidden rounded-md border text-left transition ${
+                selectedSlide === slide.slideNumber
+                  ? "border-rednote ring-4 ring-coral/15"
+                  : "border-line hover:border-violet/40"
+              }`}
+            >
+              <img src={slide.url} alt={`Slide ${slide.slideNumber}`} className="aspect-[3/4] w-full object-cover" />
+              <span className="block border-t border-line bg-white px-2 py-1 text-xs font-semibold text-muted">
+                {slide.slideNumber}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {activeImage && activeSlide?.spec ? (
+        <div className="mt-2 rounded-md border border-line bg-white p-3">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-semibold uppercase text-muted">Slide {activeImage.slideNumber}</p>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => renderSlides([activeImage.slideNumber])}
+                disabled={isBusy}
+                title="Regenerate this slide image with the same text"
+                className="text-xs font-semibold text-muted transition hover:text-violet disabled:opacity-60"
+              >
+                Redraw
+              </button>
+              <a
+                href={`${activeImage.url}?download=slide-${activeImage.slideNumber}.png`}
+                className="text-xs font-semibold text-violet hover:underline"
+              >
+                Download
+              </a>
+            </div>
+          </div>
+
+          <div className="mt-2 flex gap-2">
+            <textarea
+              value={comment}
+              onChange={(event) => setComment(event.target.value)}
+              rows={2}
+              placeholder='这张图要改什么？例如 "标题口语一点" / "少两条bullet" / "背景亮一点"'
+              className="min-w-0 flex-1 rounded-md border border-line bg-white px-3 py-2 text-sm leading-6 text-ink outline-none focus:border-violet/50 focus:ring-4 focus:ring-violet/10"
+            />
+            <ActionButton
+              label={isBusy ? "..." : "Apply"}
+              onClick={applyComment}
+              disabled={isBusy || !comment.trim()}
+              strong
+            />
+          </div>
+
+          <details className="mt-2">
+            <summary className="cursor-pointer text-xs font-semibold text-muted transition hover:text-violet">
+              Edit text directly
+            </summary>
+            <div className="mt-2 space-y-2">
+              <EditableBlock
+                label="Title"
+                value={activeSlide.spec.text.title}
+                rows={1}
+                isEditing
+                onChange={(value) => onChange(updateSlideSpecText(content, activeSlide.slideNumber, { title: value }))}
+              />
+              <EditableBlock
+                label="Subtitle"
+                value={activeSlide.spec.text.subtitle ?? ""}
+                rows={1}
+                isEditing
+                onChange={(value) =>
+                  onChange(updateSlideSpecText(content, activeSlide.slideNumber, { subtitle: value || null }))
+                }
+              />
+              <EditableBlock
+                label="Body (one line per bullet)"
+                value={(activeSlide.spec.text.body ?? []).join("\n")}
+                rows={3}
+                isEditing
+                onChange={(value) =>
+                  onChange(
+                    updateSlideSpecText(content, activeSlide.slideNumber, {
+                      body: value.split("\n").filter((line) => line.trim()),
+                    }),
+                  )
+                }
+              />
+              <p className="text-xs leading-5 text-muted">Text edits are applied when you re-render.</p>
+            </div>
+          </details>
+        </div>
+      ) : null}
+
+      {error ? (
+        <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>
+      ) : null}
     </div>
   );
 }
@@ -696,6 +1232,9 @@ function TextPlatformPanel({
   isEditing,
   platform,
   selectedThreadsTopic,
+  contentActions,
+  onBeginEdit,
+  onCommit,
   onSelectThreadsTopic,
   onChange,
 }: {
@@ -703,6 +1242,9 @@ function TextPlatformPanel({
   isEditing: boolean;
   platform: PlatformKey;
   selectedThreadsTopic: string;
+  contentActions: React.ReactNode;
+  onBeginEdit?: () => void;
+  onCommit: () => void;
   onSelectThreadsTopic: (topic: string) => void;
   onChange: (content: TextPlatformContent) => void;
 }) {
@@ -714,7 +1256,7 @@ function TextPlatformPanel({
         label="Angle"
         value={displayedAngle}
         rows={2}
-        isEditing={isEditing}
+        isEditing={false}
         onChange={(value) => onChange({ ...content, angle: cleanInternalWorkflowPhrases(value) })}
       />
       <EditableBlock
@@ -722,16 +1264,118 @@ function TextPlatformPanel({
         value={content.content}
         rows={9}
         isEditing={isEditing}
+        actions={contentActions}
+        onBeginEdit={onBeginEdit}
+        onBlur={onCommit}
+        autoFocus
         onChange={(value) => onChange({ ...content, content: value })}
       />
       {platform === "threads" ? (
         <ThreadsTopicSection
           content={content as ThreadsContent}
-          isEditing={isEditing}
+          isEditing={false}
           selectedTopic={selectedThreadsTopic}
           onSelectTopic={onSelectThreadsTopic}
           onChange={(nextContent) => onChange(nextContent)}
         />
+      ) : null}
+    </div>
+  );
+}
+
+function LinkedInImageSection({
+  content,
+  postText,
+  generationId,
+  briefImages,
+  onImageChange,
+}: {
+  content: TextPlatformContent;
+  postText: string;
+  generationId: string | null;
+  briefImages: BriefState["images"];
+  onImageChange: (image: PostImage) => void;
+}) {
+  const image = content.image ?? null;
+  const [instructions, setInstructions] = useState(image?.instructions ?? "");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setInstructions(image?.instructions ?? "");
+  }, [image]);
+
+  const generate = async () => {
+    if (!generationId) {
+      setError("Generate or load a saved LinkedIn post before generating an image.");
+      return;
+    }
+
+    setIsGenerating(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/linkedin/image", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          generationId,
+          postText,
+          images: briefImages,
+          instructions: instructions.trim() || undefined,
+        }),
+      });
+      const data = (await response.json()) as { image?: PostImage; error?: string };
+
+      if (!response.ok || !data.image) {
+        throw new Error(data.error ?? "Could not generate the LinkedIn image.");
+      }
+
+      onImageChange(data.image);
+    } catch (caughtError) {
+      const message = caughtError instanceof Error ? caughtError.message : "Could not generate the LinkedIn image.";
+      setError(message);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  return (
+    <div className="mt-5 rounded-md border border-line bg-canvas p-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-sm font-semibold text-ink">Post Image</p>
+        <ActionButton
+          icon={<RefreshIcon className="h-4 w-4" />}
+          label={isGenerating ? "Generating..." : image ? "Regenerate" : "Generate image"}
+          onClick={generate}
+          disabled={isGenerating}
+          strong={!image}
+        />
+      </div>
+
+      {image ? (
+        <div className="mt-3 overflow-hidden rounded-md border border-line bg-white">
+          <img src={image.url} alt="Generated LinkedIn post image" className="w-full object-contain" />
+        </div>
+      ) : (
+        <p className="mt-3 rounded-md border border-dashed border-line bg-white px-3 py-4 text-sm leading-6 text-muted">
+          No image yet. Generate composes one LinkedIn-ready image from the post text and your uploaded raw materials.
+        </p>
+      )}
+
+      {image ? (
+        <textarea
+          value={instructions}
+          onChange={(event) => setInstructions(event.target.value)}
+          rows={2}
+          placeholder='What should change? e.g. "use the analytics screenshot as the hero", "no text in the image" — then Regenerate'
+          className="mt-2 w-full rounded-md border border-line bg-white px-3 py-2 text-sm leading-6 text-ink outline-none focus:border-violet/50 focus:ring-4 focus:ring-violet/10"
+        />
+      ) : null}
+
+      {error ? (
+        <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>
       ) : null}
     </div>
   );
@@ -826,30 +1470,104 @@ function EditableBlock({
   value,
   rows,
   isEditing,
+  actions,
+  onBeginEdit,
+  onBlur,
+  autoFocus = false,
   onChange,
 }: {
   label: string;
   value: string;
   rows: number;
   isEditing: boolean;
+  actions?: React.ReactNode;
+  onBeginEdit?: () => void;
+  onBlur?: () => void;
+  autoFocus?: boolean;
   onChange?: (value: string) => void;
 }) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    if (!isEditing || !textareaRef.current) return;
+
+    resizeTextareaToContent(textareaRef.current);
+  }, [isEditing, value]);
+
   return (
-    <label className="block">
-      <span className="mb-2 block text-sm font-semibold text-ink">{label}</span>
+    <div className="block">
+      <span className="mb-2 flex min-h-8 items-center justify-between gap-3">
+        <span className="block text-sm font-semibold text-ink">{label}</span>
+        {actions}
+      </span>
       {isEditing ? (
         <textarea
+          ref={textareaRef}
+          autoFocus={autoFocus}
+          aria-label={label || undefined}
           value={value}
-          onChange={(event) => onChange?.(event.target.value)}
+          onChange={(event) => {
+            resizeTextareaToContent(event.currentTarget);
+            onChange?.(event.currentTarget.value);
+          }}
+          onBlur={onBlur}
           rows={rows}
-          className="w-full rounded-md border border-line bg-white px-3 py-2 text-sm leading-6 text-ink outline-none focus:border-violet/50 focus:ring-4 focus:ring-violet/10"
+          className="w-full resize-none overflow-hidden rounded-md border border-line bg-white px-3 py-2 text-sm leading-6 text-ink outline-none focus:border-violet/50 focus:ring-4 focus:ring-violet/10"
         />
+      ) : onBeginEdit ? (
+        <button
+          type="button"
+          onClick={onBeginEdit}
+          aria-label={`Edit ${label.toLowerCase()}`}
+          className="w-full cursor-text whitespace-pre-wrap rounded-md border border-line bg-white px-3 py-2 text-left text-sm leading-6 text-ink transition hover:border-[#8bade4]/65 hover:bg-[#fefdf8]"
+        >
+          {value}
+        </button>
       ) : (
-        <div className="whitespace-pre-wrap rounded-md border border-line bg-white px-3 py-2 text-sm leading-6 text-ink">
+        <div className="w-full whitespace-pre-wrap rounded-md border border-line bg-white px-3 py-2 text-left text-sm leading-6 text-ink">
           {value}
         </div>
       )}
-    </label>
+    </div>
+  );
+}
+
+function resizeTextareaToContent(textarea: HTMLTextAreaElement) {
+  textarea.style.height = "auto";
+  textarea.style.height = `${textarea.scrollHeight}px`;
+}
+
+function ContentFieldAction({
+  icon,
+  label,
+  onClick,
+  strong = false,
+  disabled = false,
+}: {
+  icon?: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  strong?: boolean;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onClick();
+      }}
+      disabled={disabled}
+      className={`inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-55 ${
+        strong
+          ? "bg-[#8bade4] text-ink hover:bg-[#7a9edb]"
+          : "border border-line bg-white text-[#536a91] hover:border-[#8bade4]/65 hover:text-ink"
+      }`}
+    >
+      {icon}
+      {label}
+    </button>
   );
 }
 
@@ -873,7 +1591,7 @@ function ActionButton({
       disabled={disabled}
       className={`inline-flex h-10 items-center gap-2 rounded-md px-3 text-sm font-semibold transition ${
         strong
-          ? "bg-violet text-white shadow-brand hover:bg-ink disabled:cursor-not-allowed disabled:opacity-60"
+          ? "bg-[#8bade4] text-ink shadow-brand hover:bg-[#7a9edb] disabled:cursor-not-allowed disabled:opacity-60"
           : "border border-line bg-white text-ink hover:border-violet/40 hover:text-violet disabled:cursor-not-allowed disabled:opacity-60"
       }`}
     >
@@ -1069,4 +1787,20 @@ function statusLabel(status: PlatformStatus) {
   if (status === "approved") return "Approved";
   if (status === "posted") return "Posted";
   return "Alt angle";
+}
+
+function platformLifecycleLabel(state: PlatformGenerationState, status: PlatformStatus) {
+  if (state === "not_generated") return "Not generated";
+  if (state === "generating") return "Generating";
+  if (state === "error") return "Needs retry";
+  return statusLabel(status);
+}
+
+function platformLifecycleClass(state: PlatformGenerationState, status: PlatformStatus) {
+  if (state === "generating") return "bg-[#d3eafa] text-[#536a91]";
+  if (state === "error") return "bg-rose-50 text-rose-700";
+  if (state === "not_generated") return "bg-canvas text-muted";
+  if (status === "posted") return "bg-teal/10 text-teal";
+  if (status === "approved") return "bg-violet/10 text-violet";
+  return "bg-canvas text-muted";
 }

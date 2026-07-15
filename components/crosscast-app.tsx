@@ -1,16 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AssistantPanel } from "./assistant-panel";
+import { syncSelectedVariant } from "@/lib/content-variants";
 import { CalendarView, DashboardView } from "./calendar-dashboard";
 import { copyToClipboard } from "./clipboard";
 import { CreateView } from "./create-view";
 import { EditorView } from "./editor-view";
-import { PlusIcon } from "./icons";
+import { CalendarIcon, CreateIcon, DashboardIcon, PanelIcon, PlusIcon, SearchIcon } from "./icons";
 import { defaultBrief, fallbackScheduledPosts, fallbackSessions, initialStatuses, sampleGeneration } from "./mock-data";
 import type {
   BriefState,
   GeneratedContent,
+  PlatformGenerationState,
   PlatformKey,
   PlatformStatus,
   RedNoteContent,
@@ -23,15 +24,27 @@ import type {
 
 export function CrosscastApp() {
   const [view, setView] = useState<ViewKey>("create");
+  const [isSessionsOpen, setIsSessionsOpen] = useState(false);
+  const [lastCreateView, setLastCreateView] = useState<Extract<ViewKey, "create" | "editor">>("create");
+  const [loadingSessionId, setLoadingSessionId] = useState<string | null>(null);
   const [brief, setBrief] = useState<BriefState>(defaultBrief);
   const [sessions, setSessions] = useState<SessionSummary[]>(fallbackSessions);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
-  const [isAssistantOpen, setIsAssistantOpen] = useState(false);
   const [statuses, setStatuses] = useState<Record<PlatformKey, PlatformStatus>>(initialStatuses);
   const [generation, setGeneration] = useState<GeneratedContent>(sampleGeneration);
   const [scheduledPosts, setScheduledPosts] = useState<ScheduledPost[]>(fallbackScheduledPosts);
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [platformGenerationStates, setPlatformGenerationStates] = useState<
+    Partial<Record<PlatformKey, PlatformGenerationState>>
+  >({});
+  const [platformGenerationErrors, setPlatformGenerationErrors] = useState<Partial<Record<PlatformKey, string>>>({});
   const [dbNotice, setDbNotice] = useState<string | null>(null);
+  const isGenerating = Object.values(platformGenerationStates).some((state) => state === "generating");
+
+  useEffect(() => {
+    if (view === "create" || view === "editor") {
+      setLastCreateView(view);
+    }
+  }, [view]);
 
   useEffect(() => {
     let isMounted = true;
@@ -152,11 +165,17 @@ export function CrosscastApp() {
     };
   }, []);
 
-  const handleGenerate = async () => {
-    setIsGenerating(true);
-    setDbNotice(null);
-
-    const localId = currentSessionId ?? crypto.randomUUID();
+  const generatePlatforms = async ({
+    activeBrief,
+    baseGeneration,
+    sessionId,
+    platforms,
+  }: {
+    activeBrief: BriefState;
+    baseGeneration: GeneratedContent;
+    sessionId: string;
+    platforms: PlatformKey[];
+  }) => {
     try {
       const response = await fetch("/api/generate", {
         method: "POST",
@@ -164,15 +183,17 @@ export function CrosscastApp() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          sessionId: localId,
-          theme: brief.theme,
-          rawMaterial: brief.rawMaterial,
-          additionalContext: brief.additionalContext,
-          images: brief.images.map((image) => ({
+          sessionId,
+          theme: activeBrief.theme,
+          rawMaterial: activeBrief.rawMaterial,
+          additionalContext: activeBrief.additionalContext,
+          images: activeBrief.images.map((image) => ({
             id: image.id,
             name: image.name,
             url: image.url,
           })),
+          selectedPlatforms: activeBrief.selectedPlatforms,
+          platformsToGenerate: platforms,
         }),
       });
 
@@ -186,35 +207,137 @@ export function CrosscastApp() {
         throw new Error(data.error ?? "Generation failed.");
       }
 
+      const projectTitle = data.generation.contentAnalysis.projectTitle?.trim() || activeBrief.theme || "Untitled project";
+      const nextBrief = { ...activeBrief, theme: projectTitle };
+      const nextGeneration = mergeGenerations(baseGeneration, data.generation);
       const nextSession: SessionSummary = {
         id: data.sessionId,
+        date: formatDate(new Date().toISOString()),
+        title: projectTitle,
+        brief: nextBrief,
+      };
+      setCurrentSessionId(data.sessionId);
+      setBrief(nextBrief);
+      setSessions((items) => [nextSession, ...items.filter((item) => item.id !== data.sessionId)]);
+      setGeneration(nextGeneration);
+      setStatuses((current) =>
+        platforms.reduce<Record<PlatformKey, PlatformStatus>>(
+          (next, platform) => ({
+            ...next,
+            [platform]: platformStatus(nextGeneration.platforms[platform]?.recommended),
+          }),
+          current,
+        ),
+      );
+      setPlatformGenerationStates((current) =>
+        platforms.reduce<Partial<Record<PlatformKey, PlatformGenerationState>>>(
+          (next, platform) => ({ ...next, [platform]: "generated" }),
+          current,
+        ),
+      );
+      saveLocalSession({
+        ...nextSession,
+        generation: nextGeneration,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Generation failed.";
+      setPlatformGenerationStates((current) =>
+        platforms.reduce<Partial<Record<PlatformKey, PlatformGenerationState>>>(
+          (next, platform) => ({ ...next, [platform]: "error" }),
+          current,
+        ),
+      );
+      setPlatformGenerationErrors((current) =>
+        platforms.reduce<Partial<Record<PlatformKey, string>>>(
+          (next, platform) => ({ ...next, [platform]: message }),
+          current,
+        ),
+      );
+    }
+  };
+
+  const handleStartPlatformWorkspace = (activeBrief: BriefState) => {
+    setDbNotice(null);
+    setIsSessionsOpen(false);
+
+    const localId = currentSessionId ?? crypto.randomUUID();
+    const hasExistingWorkspace = Object.keys(platformGenerationStates).length > 0;
+    const nextGeneration = hasExistingWorkspace
+      ? selectGenerationPlatforms(generation, activeBrief.selectedPlatforms)
+      : emptyGenerationForBrief(activeBrief);
+    const platformsToGenerate = activeBrief.selectedPlatforms.filter((platform) => !nextGeneration.platforms[platform]);
+    const nextSession: SessionSummary = {
+      id: localId,
+      date: formatDate(new Date().toISOString()),
+      title: activeBrief.theme || "Untitled project",
+      brief: activeBrief,
+    };
+    const nextGenerationStates = buildPlatformGenerationStates(activeBrief, nextGeneration);
+    platformsToGenerate.forEach((platform) => {
+      nextGenerationStates[platform] = "generating";
+    });
+
+    setCurrentSessionId(localId);
+    setBrief(activeBrief);
+    setGeneration(nextGeneration);
+    setStatuses(buildStatuses(nextGeneration));
+    setPlatformGenerationStates(nextGenerationStates);
+    setPlatformGenerationErrors({});
+    setSessions((items) => [nextSession, ...items.filter((item) => item.id !== localId)]);
+    saveLocalSession({
+      ...nextSession,
+      generation: nextGeneration,
+    });
+    setView("editor");
+
+    if (platformsToGenerate.length) {
+      void generatePlatforms({
+        activeBrief,
+        baseGeneration: nextGeneration,
+        sessionId: localId,
+        platforms: platformsToGenerate,
+      });
+    }
+  };
+
+  const generatePlatform = async (platform: PlatformKey) => {
+    if (!brief.selectedPlatforms.includes(platform)) {
+      throw new Error("Choose this platform before generating it.");
+    }
+
+    setPlatformGenerationStates((current) => ({ ...current, [platform]: "generating" }));
+    setPlatformGenerationErrors((current) => ({ ...current, [platform]: undefined }));
+    setDbNotice(null);
+
+    await generatePlatforms({
+      activeBrief: brief,
+      baseGeneration: generation,
+      sessionId: currentSessionId ?? crypto.randomUUID(),
+      platforms: [platform],
+    });
+  };
+
+  const handleNewSession = async () => {
+    if (currentSessionId && (brief.theme || brief.rawMaterial || brief.additionalContext || brief.images.length > 0)) {
+      const currentSummary: SessionSummary = {
+        id: currentSessionId,
         date: formatDate(new Date().toISOString()),
         title: brief.theme || "Untitled brief",
         brief,
       };
-      setCurrentSessionId(data.sessionId);
-      setSessions((items) => [nextSession, ...items.filter((item) => item.id !== data.sessionId)]);
-      setGeneration(data.generation);
-      setStatuses(buildStatuses(data.generation));
       saveLocalSession({
-        ...nextSession,
-        generation: data.generation,
+        ...currentSummary,
+        generation: view === "editor" ? generation : null,
       });
-      setView("editor");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Generation failed.";
-      setDbNotice(message);
-    } finally {
-      setIsGenerating(false);
+      setSessions((items) => [currentSummary, ...items.filter((item) => item.id !== currentSessionId)]);
     }
-  };
 
-  const handleNewSession = async () => {
     setBrief(defaultBrief);
-    setIsAssistantOpen(false);
     setView("create");
     setGeneration(sampleGeneration);
     setStatuses(initialStatuses);
+    setPlatformGenerationStates({});
+    setPlatformGenerationErrors({});
     setDbNotice(null);
 
     try {
@@ -253,10 +376,14 @@ export function CrosscastApp() {
       if (data.session.generation) {
         setGeneration(data.session.generation);
         setStatuses(buildStatuses(data.session.generation));
+        setPlatformGenerationStates(buildPlatformGenerationStates(data.session.brief, data.session.generation));
+        setPlatformGenerationErrors({});
         setView("editor");
       } else {
         setGeneration(sampleGeneration);
         setStatuses(initialStatuses);
+        setPlatformGenerationStates({});
+        setPlatformGenerationErrors({});
         setView("create");
       }
     } catch (error) {
@@ -268,6 +395,10 @@ export function CrosscastApp() {
         setCurrentSessionId(cachedSession.id);
         setGeneration(cachedSession.generation ?? sampleGeneration);
         setStatuses(cachedSession.generation ? buildStatuses(cachedSession.generation) : initialStatuses);
+        setPlatformGenerationStates(
+          cachedSession.generation ? buildPlatformGenerationStates(cachedSession.brief, cachedSession.generation) : {},
+        );
+        setPlatformGenerationErrors({});
         setView(cachedSession.generation ? "editor" : "create");
         setDbNotice(message);
         return;
@@ -278,6 +409,8 @@ export function CrosscastApp() {
       setCurrentSessionId(session.id.startsWith("may-") ? null : session.id);
       setGeneration(sampleGeneration);
       setStatuses(hasFallbackGeneration ? buildStatuses(sampleGeneration) : initialStatuses);
+      setPlatformGenerationStates(hasFallbackGeneration ? buildPlatformGenerationStates(session.brief, sampleGeneration) : {});
+      setPlatformGenerationErrors({});
       setView(hasFallbackGeneration ? "editor" : "create");
       setDbNotice(message);
     }
@@ -297,19 +430,33 @@ export function CrosscastApp() {
     }));
   };
 
+  // Local-only update for changes the server has already persisted (e.g. a generated
+  // image); unlike updatePlatformContent it never touches platform statuses.
+  const patchPlatformContent = (platform: PlatformKey, content: GeneratedContent["platforms"][PlatformKey]) => {
+    const nextContent = content ? syncSelectedVariant(content) : content;
+    setGeneration((current) => ({
+      ...current,
+      platforms: {
+        ...current.platforms,
+        [platform]: nextContent,
+      },
+    }));
+  };
+
   const savePlatformContent = async (platform: PlatformKey, content: GeneratedContent["platforms"][PlatformKey]) => {
     const generationId = generation.generationIds?.[platform];
     if (!generationId) {
       throw new Error("This platform has not been persisted yet.");
     }
 
+    const nextContent = content ? syncSelectedVariant(content) : content;
     const response = await fetch(`/api/generations/${generationId}`, {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        content,
+        content: nextContent,
         status: statuses[platform] === "approved" ? "approved" : "draft",
       }),
     });
@@ -611,52 +758,113 @@ export function CrosscastApp() {
     return { postUrl: data.postUrl };
   };
 
+  const isCreateArea = view === "create" || view === "editor";
+  const contextualTitle =
+    view === "calendar"
+      ? "Calendar"
+      : view === "dashboard"
+        ? "Dashboard"
+        : view === "editor"
+          ? "Platform drafts"
+          : brief.theme || "Create new content";
+  const contextualLabel = view === "editor" ? "Create / Editor" : view === "create" ? "Create / New project" : "Workspace";
+
+  const navigatePrimary = (target: "create" | "calendar" | "dashboard") => {
+    if (target === "create") {
+      if (isCreateArea) {
+        setIsSessionsOpen((current) => !current);
+      } else {
+        setView(lastCreateView);
+        setIsSessionsOpen(true);
+      }
+      return;
+    }
+
+    setView(target);
+    setIsSessionsOpen(false);
+  };
+
+  const startNewSession = async () => {
+    setLoadingSessionId("new");
+    setIsSessionsOpen(true);
+    try {
+      await handleNewSession();
+    } finally {
+      setLoadingSessionId(null);
+    }
+  };
+
+  const openSession = async (session: SessionSummary) => {
+    setLoadingSessionId(session.id);
+    try {
+      await handleLoadSession(session);
+    } finally {
+      setLoadingSessionId(null);
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-canvas text-ink">
-      <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-line bg-white/92 px-4 shadow-[0_8px_28px_rgba(8,10,53,0.04)] backdrop-blur sm:px-6">
-        <button
-          type="button"
-          onClick={() => setView("create")}
-          className="flex h-11 items-center rounded-md outline-none transition focus:ring-4 focus:ring-violet/15"
-        >
-          <img src="/crosscast-logo.png" alt="Crosscast" className="h-9 w-auto object-contain" />
-        </button>
-        <nav className="flex items-center gap-1 rounded-md border border-line bg-canvas/80 p-1 shadow-sm">
-          {(["create", "calendar", "dashboard"] as ViewKey[]).map((item) => (
-            <button
-              key={item}
-              type="button"
-              onClick={() => setView(item)}
-              className={`h-9 rounded px-3 text-sm font-semibold capitalize transition ${
-                view === item ? "bg-white text-violet shadow-sm" : "text-muted hover:bg-white/70 hover:text-ink"
-              }`}
-            >
-              {item}
-            </button>
-          ))}
-        </nav>
-      </header>
+    <div className="flex min-h-screen bg-canvas text-ink">
+      <PrimaryRail activeView={view} isGenerating={isGenerating} onNavigate={navigatePrimary} />
 
-      <div className="flex min-h-[calc(100vh-4rem)]">
-        <HistorySidebar
-          sessions={sessions}
-          notice={dbNotice}
-          onLoadSession={handleLoadSession}
-          onNewSession={handleNewSession}
-        />
+      {isCreateArea && isSessionsOpen ? (
+        <>
+          <button
+            type="button"
+            aria-label="Close sessions"
+            onClick={() => setIsSessionsOpen(false)}
+            className="fixed inset-0 left-[72px] z-30 bg-ink/10 backdrop-blur-[1px] xl:hidden"
+          />
+          <SessionsPanel
+            sessions={sessions}
+            currentSessionId={currentSessionId}
+            notice={dbNotice}
+            loadingSessionId={loadingSessionId}
+            onClose={() => setIsSessionsOpen(false)}
+            onLoadSession={(session) => void openSession(session)}
+            onNewSession={() => void startNewSession()}
+          />
+        </>
+      ) : null}
 
-        <main className="min-w-0 flex-1">
+      <div className="min-w-0 flex flex-1 flex-col">
+        <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center justify-between border-b border-line bg-[#fefdf8]/95 px-4 shadow-[0_1px_2px_rgba(44,48,64,0.04)] backdrop-blur sm:px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            {isCreateArea ? (
+              <button
+                type="button"
+                aria-label={isSessionsOpen ? "Hide sessions" : "Show sessions"}
+                onClick={() => setIsSessionsOpen((current) => !current)}
+                className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg border transition ${
+                  isSessionsOpen
+                    ? "border-[#8bade4]/55 bg-[#d3eafa]/75 text-violet"
+                    : "border-line bg-white text-muted hover:border-[#8bade4]/55 hover:text-violet"
+                }`}
+              >
+                <PanelIcon className="h-[18px] w-[18px]" />
+              </button>
+            ) : null}
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#9096b0]">{contextualLabel}</p>
+              <h1 className="truncate text-sm font-semibold text-ink sm:text-[15px]">{contextualTitle}</h1>
+            </div>
+          </div>
+
+        </header>
+
+        <main className="min-h-0 min-w-0 flex-1">
           <div className="flex min-h-[calc(100vh-4rem)]">
             <div className="min-w-0 flex-1">
               {view === "create" ? (
                 <CreateView
+                  key={currentSessionId ?? "fresh-create"}
                   brief={brief}
-                  isAssistantOpen={isAssistantOpen}
+                  recentSession={sessions.find((session) => session.id !== currentSessionId) ?? null}
                   isSaving={isGenerating}
                   dbNotice={dbNotice}
                   onBriefChange={setBrief}
-                  onGenerate={handleGenerate}
-                  onOpenAssistant={() => setIsAssistantOpen(true)}
+                  onContinue={handleStartPlatformWorkspace}
+                  onResumeRecent={(session) => void openSession(session)}
                 />
               ) : null}
               {view === "editor" ? (
@@ -664,8 +872,12 @@ export function CrosscastApp() {
                   brief={brief}
                   generation={generation}
                   statuses={statuses}
+                  generationStates={platformGenerationStates}
+                  generationErrors={platformGenerationErrors}
                   onBack={() => setView("create")}
+                  onGeneratePlatform={generatePlatform}
                   onSavePlatform={savePlatformContent}
+                  onPatchPlatform={patchPlatformContent}
                   onRegeneratePlatform={regeneratePlatform}
                   onApprove={approvePlatform}
                   onPublishLinkedIn={publishLinkedInPost}
@@ -684,17 +896,6 @@ export function CrosscastApp() {
               ) : null}
             </div>
 
-            {isAssistantOpen && view === "create" ? (
-              <div className="fixed inset-y-0 right-0 z-40 w-full max-w-[390px] pt-16 shadow-2xl lg:static lg:z-auto lg:max-w-none lg:pt-0 lg:shadow-none">
-                <AssistantPanel
-                  brief={brief}
-                  sessionId={currentSessionId}
-                  onClose={() => setIsAssistantOpen(false)}
-                  onApply={(nextBrief) => setBrief(nextBrief)}
-                  onSessionIdChange={setCurrentSessionId}
-                />
-              </div>
-            ) : null}
           </div>
         </main>
       </div>
@@ -702,75 +903,182 @@ export function CrosscastApp() {
   );
 }
 
-function HistorySidebar({
+function PrimaryRail({
+  activeView,
+  isGenerating,
+  onNavigate,
+}: {
+  activeView: ViewKey;
+  isGenerating: boolean;
+  onNavigate: (view: "create" | "calendar" | "dashboard") => void;
+}) {
+  const activePrimary = activeView === "editor" ? "create" : activeView;
+  const items = [
+    { key: "create" as const, label: "Create", icon: CreateIcon },
+    { key: "calendar" as const, label: "Calendar", icon: CalendarIcon },
+    { key: "dashboard" as const, label: "Dashboard", icon: DashboardIcon },
+  ];
+
+  return (
+    <aside className="sticky top-0 z-50 flex h-screen w-[72px] shrink-0 flex-col border-r border-line bg-[#fefdf8]">
+      <div className="grid h-16 shrink-0 place-items-center border-b border-line">
+        <button
+          type="button"
+          onClick={() => onNavigate("create")}
+          aria-label="Open Create workspace"
+          className="grid h-10 w-10 place-items-center overflow-hidden rounded-xl bg-[#d3eafa] ring-1 ring-[#8bade4]/30 transition hover:bg-[#c6e2f7] focus:outline-none focus:ring-4 focus:ring-[#8bade4]/20"
+        >
+          <span className="font-serif text-lg font-bold text-[#536a91]">C</span>
+        </button>
+      </div>
+
+      <nav aria-label="Primary navigation" className="flex flex-1 flex-col items-center gap-2 px-2 py-4">
+        {items.map(({ key, label, icon: ItemIcon }) => {
+          const active = activePrimary === key;
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => onNavigate(key)}
+              aria-current={active ? "page" : undefined}
+              className={`relative flex h-[58px] w-14 flex-col items-center justify-center gap-1 rounded-xl text-[10px] font-semibold transition ${
+                active ? "bg-[#d3eafa]/70 text-violet" : "text-[#70778f] hover:bg-[#d3eafa]/40 hover:text-ink"
+              }`}
+            >
+              {active ? <span className="absolute -left-2 top-3 h-8 w-[3px] rounded-r-full bg-[#8bade4]" /> : null}
+              <ItemIcon className="h-5 w-5" />
+              <span>{label}</span>
+            </button>
+          );
+        })}
+      </nav>
+
+      <div className="flex flex-col items-center gap-2 border-t border-line py-4">
+        <span
+          className={`h-2 w-2 rounded-full ${isGenerating ? "animate-pulse bg-[#8bade4]" : "bg-emerald-400"}`}
+          aria-label={isGenerating ? "Generating content" : "Workspace ready"}
+        />
+        <span className="text-[9px] font-semibold text-[#9096b0]">{isGenerating ? "Working" : "Ready"}</span>
+      </div>
+    </aside>
+  );
+}
+
+function SessionsPanel({
   sessions,
+  currentSessionId,
   notice,
+  loadingSessionId,
+  onClose,
   onLoadSession,
   onNewSession,
 }: {
   sessions: SessionSummary[];
+  currentSessionId: string | null;
   notice: string | null;
+  loadingSessionId: string | null;
+  onClose: () => void;
   onLoadSession: (session: SessionSummary) => void;
   onNewSession: () => void;
 }) {
-  const grouped = sessions.reduce<Record<string, SessionSummary[]>>((acc, session) => {
+  const [query, setQuery] = useState("");
+  const filteredSessions = sessions.filter((session) => session.title.toLowerCase().includes(query.trim().toLowerCase()));
+  const grouped = filteredSessions.reduce<Record<string, SessionSummary[]>>((acc, session) => {
     acc[session.date] = [...(acc[session.date] ?? []), session];
     return acc;
   }, {});
 
   return (
-    <aside className="hidden w-64 shrink-0 border-r border-line bg-white/82 p-4 backdrop-blur md:block">
-      <div className="mb-5 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-ink">History</h2>
-        <button
-          type="button"
-          onClick={onNewSession}
-          aria-label="New session"
-          className="rounded-md border border-line p-2 text-muted transition hover:border-violet/40 hover:bg-violet/5 hover:text-violet"
-        >
-          <PlusIcon className="h-4 w-4" />
-        </button>
-      </div>
-
-      {notice ? (
-        <p className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
-          {notice}
-        </p>
-      ) : null}
-
-      <div className="space-y-5">
-        {Object.entries(grouped).map(([date, items]) => (
-          <div key={date}>
-            <p className="mb-2 text-xs font-semibold uppercase text-muted">{date}</p>
-            <div className="space-y-1">
-              {items.map((session) => (
-                <button
-                  key={session.id}
-                  type="button"
-                  onClick={() => onLoadSession(session)}
-                  className="w-full rounded-md px-2 py-2 text-left text-sm leading-5 text-slate-700 transition hover:bg-violet/5 hover:text-ink"
-                >
-                  <span className="block truncate">{session.title}</span>
-                </button>
-              ))}
+    <aside className="fixed inset-y-0 left-[72px] z-40 flex w-72 shrink-0 flex-col border-r border-line bg-[#fefdf8] shadow-2xl xl:sticky xl:top-0 xl:z-30 xl:h-screen xl:shadow-none">
+        <div className="border-b border-line p-4">
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-semibold text-ink">Sessions</h2>
+              <p className="mt-0.5 text-xs text-[#9096b0]">Your recent work</p>
             </div>
+          <button
+            type="button"
+            onClick={onClose}
+              aria-label="Hide sessions"
+              className="grid h-8 w-8 place-items-center rounded-lg border border-line bg-white text-sm font-semibold text-muted transition hover:border-violet/40 hover:text-violet"
+          >
+            ✕
+          </button>
           </div>
-        ))}
-      </div>
 
-      <button
-        type="button"
-        onClick={onNewSession}
-        className="mt-8 flex h-10 w-full items-center justify-center gap-2 rounded-md bg-violet text-sm font-semibold text-white shadow-brand transition hover:bg-ink"
-      >
-        <PlusIcon className="h-4 w-4" />
-        New Session
-      </button>
-    </aside>
+          <button
+            type="button"
+            onClick={onNewSession}
+            disabled={loadingSessionId === "new"}
+            className="flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-[#8bade4] text-sm font-semibold text-[#252a3a] shadow-brand transition hover:bg-[#7a9edb] disabled:cursor-wait disabled:opacity-65"
+          >
+            <PlusIcon className="h-4 w-4" />
+            {loadingSessionId === "new" ? "Starting…" : "New session"}
+          </button>
+
+          <label className="mt-3 flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-muted transition focus-within:border-[#8bade4] focus-within:ring-4 focus-within:ring-[#8bade4]/10">
+            <SearchIcon className="h-4 w-4 shrink-0" />
+            <span className="sr-only">Search sessions</span>
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search sessions"
+              className="min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-[#9096b0]"
+            />
+          </label>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          {notice ? (
+            <p className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+              {notice}
+            </p>
+          ) : null}
+
+          <div className="space-y-5">
+            {Object.entries(grouped).map(([date, items]) => (
+              <div key={date}>
+                <p className="mb-2 px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-[#9096b0]">{date}</p>
+                <div className="space-y-1">
+                  {items.map((session) => {
+                    const active = currentSessionId === session.id;
+                    const loading = loadingSessionId === session.id;
+                    return (
+                    <button
+                      key={session.id}
+                      type="button"
+                      onClick={() => onLoadSession(session)}
+                        disabled={loading}
+                        className={`relative w-full rounded-lg border-l-[3px] px-3 py-2.5 text-left text-sm leading-5 transition ${
+                          active
+                            ? "border-[#8bade4] bg-[#d3eafa]/70 text-ink"
+                            : "border-transparent text-slate-700 hover:border-[#8bade4]/60 hover:bg-[#d3eafa]/45 hover:text-ink"
+                        } disabled:cursor-wait`}
+                    >
+                        <span className="block truncate font-medium">{session.title}</span>
+                        <span className="mt-0.5 block text-[11px] text-[#9096b0]">{loading ? "Opening…" : date}</span>
+                    </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+
+            {Object.keys(grouped).length === 0 ? (
+              <div className="rounded-xl border border-dashed border-[#9096b0]/40 bg-[#d3eafa]/20 px-4 py-8 text-center">
+                <p className="text-sm font-semibold text-ink">No sessions found</p>
+                <p className="mt-1 text-xs leading-5 text-[#70778f]">Try another search or start a new session.</p>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </aside>
   );
 }
 
 const localHistoryKey = "crosscast.localHistory.v1";
+const localHistorySessionLimit = 50;
+const localHistoryDetailLimit = 20;
 
 type LocalHistory = {
   sessions: SessionSummary[];
@@ -789,10 +1097,10 @@ function getLocalHistory(): LocalHistory {
     }
 
     const parsed = JSON.parse(stored) as Partial<LocalHistory>;
-    return {
+    return sanitizeLocalHistory({
       sessions: Array.isArray(parsed.sessions) && parsed.sessions.length ? parsed.sessions : fallbackSessions,
       details: parsed.details && typeof parsed.details === "object" ? parsed.details : {},
-    };
+    });
   } catch {
     return { sessions: fallbackSessions, details: {} };
   }
@@ -801,13 +1109,25 @@ function getLocalHistory(): LocalHistory {
 function setLocalHistory(history: LocalHistory) {
   if (typeof window === "undefined") return;
 
-  window.localStorage.setItem(
-    localHistoryKey,
-    JSON.stringify({
-      sessions: history.sessions.slice(0, 50),
-      details: history.details,
-    }),
-  );
+  const safeHistory = sanitizeLocalHistory(history);
+
+  try {
+    window.localStorage.setItem(localHistoryKey, JSON.stringify(safeHistory));
+  } catch (error) {
+    console.warn("[Crosscast] Could not save local history cache.", error);
+
+    try {
+      window.localStorage.setItem(
+        localHistoryKey,
+        JSON.stringify({
+          sessions: safeHistory.sessions.slice(0, 10),
+          details: {},
+        }),
+      );
+    } catch {
+      window.localStorage.removeItem(localHistoryKey);
+    }
+  }
 }
 
 function getLocalSessionSummaries() {
@@ -846,6 +1166,54 @@ function saveLocalSession(session: SessionDetail) {
   });
 }
 
+function sanitizeLocalHistory(history: LocalHistory): LocalHistory {
+  const sessions = history.sessions.slice(0, localHistorySessionLimit).map(sanitizeLocalSessionSummary);
+  const details: Record<string, SessionDetail> = {};
+
+  for (const session of sessions.slice(0, localHistoryDetailLimit)) {
+    const detail = history.details[session.id];
+    if (detail) {
+      details[session.id] = sanitizeLocalSessionDetail(detail);
+    }
+  }
+
+  return {
+    sessions,
+    details,
+  };
+}
+
+function sanitizeLocalSessionSummary(session: SessionSummary): SessionSummary {
+  return {
+    ...session,
+    brief: sanitizeLocalBrief(session.brief),
+  };
+}
+
+function sanitizeLocalSessionDetail(session: SessionDetail): SessionDetail {
+  return {
+    ...session,
+    brief: sanitizeLocalBrief(session.brief),
+  };
+}
+
+function sanitizeLocalBrief(brief: BriefState): BriefState {
+  const images = brief.images.filter((image) => !isBase64DataUrl(image.url));
+
+  if (images.length === brief.images.length) {
+    return brief;
+  }
+
+  return {
+    ...brief,
+    images,
+  };
+}
+
+function isBase64DataUrl(value: string) {
+  return value.startsWith("data:");
+}
+
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("en", {
     month: "short",
@@ -859,6 +1227,73 @@ function buildStatuses(generation: GeneratedContent): Record<PlatformKey, Platfo
     threads: generation.platformStatuses?.threads ?? platformStatus(generation.platforms.threads?.recommended),
     linkedin: generation.platformStatuses?.linkedin ?? platformStatus(generation.platforms.linkedin?.recommended),
   };
+}
+
+function emptyGenerationForBrief(brief: BriefState): GeneratedContent {
+  return {
+    contentAnalysis: {
+      contentType: "Pending generation",
+      summary: brief.theme || brief.rawMaterial.split("\n").find((line) => line.trim())?.trim() || "New content project",
+    },
+    platforms: {},
+    generationIds: {},
+    platformStatuses: {},
+  };
+}
+
+function mergeGenerations(current: GeneratedContent, incoming: GeneratedContent): GeneratedContent {
+  return {
+    contentAnalysis: incoming.contentAnalysis ?? current.contentAnalysis,
+    platforms: {
+      ...current.platforms,
+      ...incoming.platforms,
+    },
+    generationIds: {
+      ...current.generationIds,
+      ...incoming.generationIds,
+    },
+    platformStatuses: {
+      ...current.platformStatuses,
+      ...incoming.platformStatuses,
+    },
+  };
+}
+
+function selectGenerationPlatforms(generation: GeneratedContent, selectedPlatforms: PlatformKey[]): GeneratedContent {
+  const selected = new Set(selectedPlatforms);
+  const platforms: GeneratedContent["platforms"] = {};
+  const generationIds: GeneratedContent["generationIds"] = {};
+  const platformStatuses: GeneratedContent["platformStatuses"] = {};
+
+  if (selected.has("rednote") && generation.platforms.rednote) platforms.rednote = generation.platforms.rednote;
+  if (selected.has("threads") && generation.platforms.threads) platforms.threads = generation.platforms.threads;
+  if (selected.has("linkedin") && generation.platforms.linkedin) platforms.linkedin = generation.platforms.linkedin;
+
+  selectedPlatforms.forEach((platform) => {
+    if (generation.generationIds?.[platform]) generationIds[platform] = generation.generationIds[platform];
+    if (generation.platformStatuses?.[platform]) platformStatuses[platform] = generation.platformStatuses[platform];
+  });
+
+  return {
+    ...generation,
+    platforms,
+    generationIds,
+    platformStatuses,
+  };
+}
+
+function buildPlatformGenerationStates(
+  brief: BriefState,
+  generation: GeneratedContent,
+): Partial<Record<PlatformKey, PlatformGenerationState>> {
+  const platforms = brief.selectedPlatforms.length
+    ? brief.selectedPlatforms
+    : (["rednote", "threads", "linkedin"] as PlatformKey[]).filter((platform) => generation.platforms[platform]);
+
+  return platforms.reduce<Partial<Record<PlatformKey, PlatformGenerationState>>>((states, platform) => {
+    states[platform] = generation.platforms[platform] ? "generated" : "not_generated";
+    return states;
+  }, {});
 }
 
 function platformStatus(recommended: boolean | undefined): PlatformStatus {

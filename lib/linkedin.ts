@@ -9,7 +9,10 @@ type LinkedInPublishResult = {
   url: string;
 };
 
-export async function publishTextToLinkedIn(text: string): Promise<LinkedInPublishResult> {
+export async function publishTextToLinkedIn(
+  text: string,
+  options?: { imageUrl?: string | null },
+): Promise<LinkedInPublishResult> {
   const accessToken = process.env.LINKEDIN_ACCESS_TOKEN;
 
   if (!accessToken) {
@@ -17,6 +20,17 @@ export async function publishTextToLinkedIn(text: string): Promise<LinkedInPubli
   }
 
   const author = await fetchLinkedInAuthorUrn(accessToken);
+  const assetUrn = options?.imageUrl ? await uploadLinkedInImage(accessToken, author, options.imageUrl) : null;
+  const shareContent = assetUrn
+    ? {
+        shareCommentary: { text },
+        shareMediaCategory: "IMAGE",
+        media: [{ status: "READY", media: assetUrn }],
+      }
+    : {
+        shareCommentary: { text },
+        shareMediaCategory: "NONE",
+      };
   const publishResponse = await fetch("https://api.linkedin.com/v2/ugcPosts", {
     method: "POST",
     headers: {
@@ -28,10 +42,7 @@ export async function publishTextToLinkedIn(text: string): Promise<LinkedInPubli
       author,
       lifecycleState: "PUBLISHED",
       specificContent: {
-        "com.linkedin.ugc.ShareContent": {
-          shareCommentary: { text },
-          shareMediaCategory: "NONE",
-        },
+        "com.linkedin.ugc.ShareContent": shareContent,
       },
       visibility: { "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC" },
     }),
@@ -68,6 +79,72 @@ export async function publishTextToLinkedIn(text: string): Promise<LinkedInPubli
     id,
     url: id ? buildLinkedInPostUrl(id) : "https://www.linkedin.com/feed/",
   };
+}
+
+async function uploadLinkedInImage(accessToken: string, author: string, imageUrl: string) {
+  const imageResponse = await fetch(imageUrl);
+  if (!imageResponse.ok) {
+    throw new Error(`Could not download the post image (${imageResponse.status}) before publishing to LinkedIn.`);
+  }
+  const imageContentType = imageResponse.headers.get("content-type") ?? "image/png";
+  const imageBytes = Buffer.from(await imageResponse.arrayBuffer());
+
+  const registerResponse = await fetch("https://api.linkedin.com/v2/assets?action=registerUpload", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+      "X-Restli-Protocol-Version": "2.0.0",
+    },
+    body: JSON.stringify({
+      registerUploadRequest: {
+        recipes: ["urn:li:digitalmediaRecipe:feedshare-image"],
+        owner: author,
+        serviceRelationships: [
+          {
+            relationshipType: "OWNER",
+            identifier: "urn:li:userGeneratedContent",
+          },
+        ],
+      },
+    }),
+  });
+
+  const registerText = await registerResponse.text();
+  const registerJson = parseJsonSafely(registerText) as {
+    value?: {
+      asset?: string;
+      uploadMechanism?: Record<string, { uploadUrl?: string }>;
+    };
+  } | null;
+  const uploadUrl =
+    registerJson?.value?.uploadMechanism?.["com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest"]?.uploadUrl;
+  const assetUrn = registerJson?.value?.asset;
+
+  if (!registerResponse.ok || !uploadUrl || !assetUrn) {
+    console.error("[LinkedIn] registerUpload failed", {
+      status: registerResponse.status,
+      body: registerJson ?? registerText,
+    });
+    throw new Error(linkedInErrorMessage(registerResponse.status, registerJson ?? registerText));
+  }
+
+  const uploadResponse = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": imageContentType,
+    },
+    body: imageBytes,
+  });
+
+  if (!uploadResponse.ok) {
+    const detail = await uploadResponse.text();
+    console.error("[LinkedIn] Image binary upload failed", { status: uploadResponse.status, body: detail });
+    throw new Error(`LinkedIn image upload failed with status ${uploadResponse.status}.`);
+  }
+
+  return assetUrn;
 }
 
 async function fetchLinkedInAuthorUrn(accessToken: string) {

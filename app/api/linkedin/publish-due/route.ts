@@ -58,7 +58,9 @@ export async function POST() {
       }
 
       try {
-        const publishResult = await publishTextToLinkedIn(postText);
+        const publishResult = await publishTextToLinkedIn(postText, {
+          imageUrl: getLinkedInImageUrl(generation.content),
+        });
         const warnings = await collectWarnings([
           markGenerationPublished(generation.id, publishResult),
           markScheduledPostPosted(scheduledPost.id),
@@ -109,6 +111,14 @@ function getLinkedInPostText(content: GenerationRow["content"]) {
   }
 
   return content.content.trim();
+}
+
+function getLinkedInImageUrl(content: GenerationRow["content"]) {
+  if (!content || typeof content !== "object" || !("image" in content)) return null;
+  const image = (content as { image?: unknown }).image;
+  if (!image || typeof image !== "object" || !("url" in image)) return null;
+  const url = (image as { url?: unknown }).url;
+  return typeof url === "string" && url ? url : null;
 }
 
 function isAlreadyPublished(content: GenerationRow["content"]) {
