@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AssistantPanel } from "./assistant-panel";
+import { syncSelectedVariant } from "@/lib/content-variants";
 import { CalendarView, DashboardView } from "./calendar-dashboard";
 import { copyToClipboard } from "./clipboard";
 import { CreateView } from "./create-view";
@@ -11,6 +11,7 @@ import { defaultBrief, fallbackScheduledPosts, fallbackSessions, initialStatuses
 import type {
   BriefState,
   GeneratedContent,
+  PlatformGenerationState,
   PlatformKey,
   PlatformStatus,
   RedNoteContent,
@@ -29,12 +30,15 @@ export function CrosscastApp() {
   const [brief, setBrief] = useState<BriefState>(defaultBrief);
   const [sessions, setSessions] = useState<SessionSummary[]>(fallbackSessions);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
-  const [isAssistantOpen, setIsAssistantOpen] = useState(false);
   const [statuses, setStatuses] = useState<Record<PlatformKey, PlatformStatus>>(initialStatuses);
   const [generation, setGeneration] = useState<GeneratedContent>(sampleGeneration);
   const [scheduledPosts, setScheduledPosts] = useState<ScheduledPost[]>(fallbackScheduledPosts);
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [platformGenerationStates, setPlatformGenerationStates] = useState<
+    Partial<Record<PlatformKey, PlatformGenerationState>>
+  >({});
+  const [platformGenerationErrors, setPlatformGenerationErrors] = useState<Partial<Record<PlatformKey, string>>>({});
   const [dbNotice, setDbNotice] = useState<string | null>(null);
+  const isGenerating = Object.values(platformGenerationStates).some((state) => state === "generating");
 
   useEffect(() => {
     if (view === "create" || view === "editor") {
@@ -161,11 +165,17 @@ export function CrosscastApp() {
     };
   }, []);
 
-  const handleGenerate = async () => {
-    setIsGenerating(true);
-    setDbNotice(null);
-
-    const localId = currentSessionId ?? crypto.randomUUID();
+  const generatePlatforms = async ({
+    activeBrief,
+    baseGeneration,
+    sessionId,
+    platforms,
+  }: {
+    activeBrief: BriefState;
+    baseGeneration: GeneratedContent;
+    sessionId: string;
+    platforms: PlatformKey[];
+  }) => {
     try {
       const response = await fetch("/api/generate", {
         method: "POST",
@@ -173,15 +183,17 @@ export function CrosscastApp() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          sessionId: localId,
-          theme: brief.theme,
-          rawMaterial: brief.rawMaterial,
-          additionalContext: brief.additionalContext,
-          images: brief.images.map((image) => ({
+          sessionId,
+          theme: activeBrief.theme,
+          rawMaterial: activeBrief.rawMaterial,
+          additionalContext: activeBrief.additionalContext,
+          images: activeBrief.images.map((image) => ({
             id: image.id,
             name: image.name,
             url: image.url,
           })),
+          selectedPlatforms: activeBrief.selectedPlatforms,
+          platformsToGenerate: platforms,
         }),
       });
 
@@ -195,27 +207,114 @@ export function CrosscastApp() {
         throw new Error(data.error ?? "Generation failed.");
       }
 
+      const projectTitle = data.generation.contentAnalysis.projectTitle?.trim() || activeBrief.theme || "Untitled project";
+      const nextBrief = { ...activeBrief, theme: projectTitle };
+      const nextGeneration = mergeGenerations(baseGeneration, data.generation);
       const nextSession: SessionSummary = {
         id: data.sessionId,
         date: formatDate(new Date().toISOString()),
-        title: brief.theme || "Untitled brief",
-        brief,
+        title: projectTitle,
+        brief: nextBrief,
       };
       setCurrentSessionId(data.sessionId);
+      setBrief(nextBrief);
       setSessions((items) => [nextSession, ...items.filter((item) => item.id !== data.sessionId)]);
-      setGeneration(data.generation);
-      setStatuses(buildStatuses(data.generation));
+      setGeneration(nextGeneration);
+      setStatuses((current) =>
+        platforms.reduce<Record<PlatformKey, PlatformStatus>>(
+          (next, platform) => ({
+            ...next,
+            [platform]: platformStatus(nextGeneration.platforms[platform]?.recommended),
+          }),
+          current,
+        ),
+      );
+      setPlatformGenerationStates((current) =>
+        platforms.reduce<Partial<Record<PlatformKey, PlatformGenerationState>>>(
+          (next, platform) => ({ ...next, [platform]: "generated" }),
+          current,
+        ),
+      );
       saveLocalSession({
         ...nextSession,
-        generation: data.generation,
+        generation: nextGeneration,
       });
-      setView("editor");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Generation failed.";
-      setDbNotice(message);
-    } finally {
-      setIsGenerating(false);
+      setPlatformGenerationStates((current) =>
+        platforms.reduce<Partial<Record<PlatformKey, PlatformGenerationState>>>(
+          (next, platform) => ({ ...next, [platform]: "error" }),
+          current,
+        ),
+      );
+      setPlatformGenerationErrors((current) =>
+        platforms.reduce<Partial<Record<PlatformKey, string>>>(
+          (next, platform) => ({ ...next, [platform]: message }),
+          current,
+        ),
+      );
     }
+  };
+
+  const handleStartPlatformWorkspace = (activeBrief: BriefState) => {
+    setDbNotice(null);
+    setIsSessionsOpen(false);
+
+    const localId = currentSessionId ?? crypto.randomUUID();
+    const hasExistingWorkspace = Object.keys(platformGenerationStates).length > 0;
+    const nextGeneration = hasExistingWorkspace
+      ? selectGenerationPlatforms(generation, activeBrief.selectedPlatforms)
+      : emptyGenerationForBrief(activeBrief);
+    const platformsToGenerate = activeBrief.selectedPlatforms.filter((platform) => !nextGeneration.platforms[platform]);
+    const nextSession: SessionSummary = {
+      id: localId,
+      date: formatDate(new Date().toISOString()),
+      title: activeBrief.theme || "Untitled project",
+      brief: activeBrief,
+    };
+    const nextGenerationStates = buildPlatformGenerationStates(activeBrief, nextGeneration);
+    platformsToGenerate.forEach((platform) => {
+      nextGenerationStates[platform] = "generating";
+    });
+
+    setCurrentSessionId(localId);
+    setBrief(activeBrief);
+    setGeneration(nextGeneration);
+    setStatuses(buildStatuses(nextGeneration));
+    setPlatformGenerationStates(nextGenerationStates);
+    setPlatformGenerationErrors({});
+    setSessions((items) => [nextSession, ...items.filter((item) => item.id !== localId)]);
+    saveLocalSession({
+      ...nextSession,
+      generation: nextGeneration,
+    });
+    setView("editor");
+
+    if (platformsToGenerate.length) {
+      void generatePlatforms({
+        activeBrief,
+        baseGeneration: nextGeneration,
+        sessionId: localId,
+        platforms: platformsToGenerate,
+      });
+    }
+  };
+
+  const generatePlatform = async (platform: PlatformKey) => {
+    if (!brief.selectedPlatforms.includes(platform)) {
+      throw new Error("Choose this platform before generating it.");
+    }
+
+    setPlatformGenerationStates((current) => ({ ...current, [platform]: "generating" }));
+    setPlatformGenerationErrors((current) => ({ ...current, [platform]: undefined }));
+    setDbNotice(null);
+
+    await generatePlatforms({
+      activeBrief: brief,
+      baseGeneration: generation,
+      sessionId: currentSessionId ?? crypto.randomUUID(),
+      platforms: [platform],
+    });
   };
 
   const handleNewSession = async () => {
@@ -234,10 +333,11 @@ export function CrosscastApp() {
     }
 
     setBrief(defaultBrief);
-    setIsAssistantOpen(false);
     setView("create");
     setGeneration(sampleGeneration);
     setStatuses(initialStatuses);
+    setPlatformGenerationStates({});
+    setPlatformGenerationErrors({});
     setDbNotice(null);
 
     try {
@@ -276,10 +376,14 @@ export function CrosscastApp() {
       if (data.session.generation) {
         setGeneration(data.session.generation);
         setStatuses(buildStatuses(data.session.generation));
+        setPlatformGenerationStates(buildPlatformGenerationStates(data.session.brief, data.session.generation));
+        setPlatformGenerationErrors({});
         setView("editor");
       } else {
         setGeneration(sampleGeneration);
         setStatuses(initialStatuses);
+        setPlatformGenerationStates({});
+        setPlatformGenerationErrors({});
         setView("create");
       }
     } catch (error) {
@@ -291,6 +395,10 @@ export function CrosscastApp() {
         setCurrentSessionId(cachedSession.id);
         setGeneration(cachedSession.generation ?? sampleGeneration);
         setStatuses(cachedSession.generation ? buildStatuses(cachedSession.generation) : initialStatuses);
+        setPlatformGenerationStates(
+          cachedSession.generation ? buildPlatformGenerationStates(cachedSession.brief, cachedSession.generation) : {},
+        );
+        setPlatformGenerationErrors({});
         setView(cachedSession.generation ? "editor" : "create");
         setDbNotice(message);
         return;
@@ -301,6 +409,8 @@ export function CrosscastApp() {
       setCurrentSessionId(session.id.startsWith("may-") ? null : session.id);
       setGeneration(sampleGeneration);
       setStatuses(hasFallbackGeneration ? buildStatuses(sampleGeneration) : initialStatuses);
+      setPlatformGenerationStates(hasFallbackGeneration ? buildPlatformGenerationStates(session.brief, sampleGeneration) : {});
+      setPlatformGenerationErrors({});
       setView(hasFallbackGeneration ? "editor" : "create");
       setDbNotice(message);
     }
@@ -323,11 +433,12 @@ export function CrosscastApp() {
   // Local-only update for changes the server has already persisted (e.g. a generated
   // image); unlike updatePlatformContent it never touches platform statuses.
   const patchPlatformContent = (platform: PlatformKey, content: GeneratedContent["platforms"][PlatformKey]) => {
+    const nextContent = content ? syncSelectedVariant(content) : content;
     setGeneration((current) => ({
       ...current,
       platforms: {
         ...current.platforms,
-        [platform]: content,
+        [platform]: nextContent,
       },
     }));
   };
@@ -338,13 +449,14 @@ export function CrosscastApp() {
       throw new Error("This platform has not been persisted yet.");
     }
 
+    const nextContent = content ? syncSelectedVariant(content) : content;
     const response = await fetch(`/api/generations/${generationId}`, {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        content,
+        content: nextContent,
         status: statuses[platform] === "approved" ? "approved" : "draft",
       }),
     });
@@ -652,8 +764,10 @@ export function CrosscastApp() {
       ? "Calendar"
       : view === "dashboard"
         ? "Dashboard"
-        : brief.theme || (view === "editor" ? "Content editor" : "Untitled brief");
-  const contextualLabel = view === "editor" ? "Create / Editor" : view === "create" ? "Create / Brief" : "Workspace";
+        : view === "editor"
+          ? "Platform drafts"
+          : brief.theme || "Create new content";
+  const contextualLabel = view === "editor" ? "Create / Editor" : view === "create" ? "Create / New project" : "Workspace";
 
   const navigatePrimary = (target: "create" | "calendar" | "dashboard") => {
     if (target === "create") {
@@ -668,7 +782,6 @@ export function CrosscastApp() {
 
     setView(target);
     setIsSessionsOpen(false);
-    setIsAssistantOpen(false);
   };
 
   const startNewSession = async () => {
@@ -737,20 +850,6 @@ export function CrosscastApp() {
             </div>
           </div>
 
-          {isCreateArea ? (
-            <button
-              type="button"
-              onClick={() => setIsAssistantOpen((current) => !current)}
-              className={`flex h-9 items-center gap-2 rounded-lg border px-3 text-sm font-semibold transition ${
-                isAssistantOpen
-                  ? "border-[#8bade4]/55 bg-[#d3eafa]/75 text-violet"
-                  : "border-line bg-white text-muted hover:border-[#8bade4]/55 hover:text-violet"
-              }`}
-            >
-              <span aria-hidden="true" className="text-base leading-none">✦</span>
-              <span className="hidden sm:inline">Assistant</span>
-            </button>
-          ) : null}
         </header>
 
         <main className="min-h-0 min-w-0 flex-1">
@@ -758,13 +857,14 @@ export function CrosscastApp() {
             <div className="min-w-0 flex-1">
               {view === "create" ? (
                 <CreateView
+                  key={currentSessionId ?? "fresh-create"}
                   brief={brief}
-                  isAssistantOpen={isAssistantOpen}
+                  recentSession={sessions.find((session) => session.id !== currentSessionId) ?? null}
                   isSaving={isGenerating}
                   dbNotice={dbNotice}
                   onBriefChange={setBrief}
-                  onGenerate={handleGenerate}
-                  onOpenAssistant={() => setIsAssistantOpen(true)}
+                  onContinue={handleStartPlatformWorkspace}
+                  onResumeRecent={(session) => void openSession(session)}
                 />
               ) : null}
               {view === "editor" ? (
@@ -772,7 +872,10 @@ export function CrosscastApp() {
                   brief={brief}
                   generation={generation}
                   statuses={statuses}
+                  generationStates={platformGenerationStates}
+                  generationErrors={platformGenerationErrors}
                   onBack={() => setView("create")}
+                  onGeneratePlatform={generatePlatform}
                   onSavePlatform={savePlatformContent}
                   onPatchPlatform={patchPlatformContent}
                   onRegeneratePlatform={regeneratePlatform}
@@ -793,17 +896,6 @@ export function CrosscastApp() {
               ) : null}
             </div>
 
-            {isAssistantOpen && isCreateArea ? (
-              <div className="fixed inset-y-0 right-0 z-40 w-full max-w-[390px] pt-16 shadow-2xl lg:static lg:z-auto lg:max-w-none lg:pt-0 lg:shadow-none">
-                <AssistantPanel
-                  brief={brief}
-                  sessionId={currentSessionId}
-                  onClose={() => setIsAssistantOpen(false)}
-                  onApply={(nextBrief) => setBrief(nextBrief)}
-                  onSessionIdChange={setCurrentSessionId}
-                />
-              </div>
-            ) : null}
           </div>
         </main>
       </div>
@@ -1135,6 +1227,73 @@ function buildStatuses(generation: GeneratedContent): Record<PlatformKey, Platfo
     threads: generation.platformStatuses?.threads ?? platformStatus(generation.platforms.threads?.recommended),
     linkedin: generation.platformStatuses?.linkedin ?? platformStatus(generation.platforms.linkedin?.recommended),
   };
+}
+
+function emptyGenerationForBrief(brief: BriefState): GeneratedContent {
+  return {
+    contentAnalysis: {
+      contentType: "Pending generation",
+      summary: brief.theme || brief.rawMaterial.split("\n").find((line) => line.trim())?.trim() || "New content project",
+    },
+    platforms: {},
+    generationIds: {},
+    platformStatuses: {},
+  };
+}
+
+function mergeGenerations(current: GeneratedContent, incoming: GeneratedContent): GeneratedContent {
+  return {
+    contentAnalysis: incoming.contentAnalysis ?? current.contentAnalysis,
+    platforms: {
+      ...current.platforms,
+      ...incoming.platforms,
+    },
+    generationIds: {
+      ...current.generationIds,
+      ...incoming.generationIds,
+    },
+    platformStatuses: {
+      ...current.platformStatuses,
+      ...incoming.platformStatuses,
+    },
+  };
+}
+
+function selectGenerationPlatforms(generation: GeneratedContent, selectedPlatforms: PlatformKey[]): GeneratedContent {
+  const selected = new Set(selectedPlatforms);
+  const platforms: GeneratedContent["platforms"] = {};
+  const generationIds: GeneratedContent["generationIds"] = {};
+  const platformStatuses: GeneratedContent["platformStatuses"] = {};
+
+  if (selected.has("rednote") && generation.platforms.rednote) platforms.rednote = generation.platforms.rednote;
+  if (selected.has("threads") && generation.platforms.threads) platforms.threads = generation.platforms.threads;
+  if (selected.has("linkedin") && generation.platforms.linkedin) platforms.linkedin = generation.platforms.linkedin;
+
+  selectedPlatforms.forEach((platform) => {
+    if (generation.generationIds?.[platform]) generationIds[platform] = generation.generationIds[platform];
+    if (generation.platformStatuses?.[platform]) platformStatuses[platform] = generation.platformStatuses[platform];
+  });
+
+  return {
+    ...generation,
+    platforms,
+    generationIds,
+    platformStatuses,
+  };
+}
+
+function buildPlatformGenerationStates(
+  brief: BriefState,
+  generation: GeneratedContent,
+): Partial<Record<PlatformKey, PlatformGenerationState>> {
+  const platforms = brief.selectedPlatforms.length
+    ? brief.selectedPlatforms
+    : (["rednote", "threads", "linkedin"] as PlatformKey[]).filter((platform) => generation.platforms[platform]);
+
+  return platforms.reduce<Partial<Record<PlatformKey, PlatformGenerationState>>>((states, platform) => {
+    states[platform] = generation.platforms[platform] ? "generated" : "not_generated";
+    return states;
+  }, {});
 }
 
 function platformStatus(recommended: boolean | undefined): PlatformStatus {

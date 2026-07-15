@@ -76,6 +76,7 @@ export const generationToolSchema = {
       properties: {
         contentType: { type: "string" },
         summary: { type: "string" },
+        projectTitle: { type: "string" },
       },
     },
     platforms: {

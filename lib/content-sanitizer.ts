@@ -20,6 +20,20 @@ export function sanitizeGeneratedContent(generation: GeneratedContent): Generate
 export function sanitizePlatformContent<T>(platform: PlatformKey, content: T): T {
   const sanitized = sanitizeValue(content, platform) as T;
 
+  if (sanitized && typeof sanitized === "object") {
+    const record = sanitized as Record<string, unknown>;
+    if (Array.isArray(record.variants)) {
+      record.variants = record.variants.map((item) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+        const variant = item as Record<string, unknown>;
+        return {
+          ...variant,
+          content: sanitizePlatformContent(platform, variant.content),
+        };
+      });
+    }
+  }
+
   if (platform === "rednote" && sanitized && typeof sanitized === "object") {
     const rednoteContent = sanitized as Record<string, unknown>;
     const titleOptions = Array.isArray(rednoteContent.titleOptions)

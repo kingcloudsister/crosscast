@@ -46,7 +46,7 @@ export const defaultBrief: BriefState = {
   rawMaterial: "",
   additionalContext: "",
   images: [],
-  selectedPlatforms: ["rednote", "threads", "linkedin"],
+  selectedPlatforms: [],
 };
 
 export const fallbackSessions: SessionSummary[] = [

@@ -30,6 +30,7 @@ export type SessionSummary = {
 };
 
 export type PlatformStatus = "recommended" | "skip" | "alternative" | "approved" | "posted";
+export type PlatformGenerationState = "not_generated" | "generating" | "generated" | "error";
 export type ScheduledPostStatus = "scheduled" | "posted" | "draft" | "approved";
 
 export type RedNoteSlideMedia = {
@@ -104,7 +105,28 @@ export type RedNoteSlideImage = {
   renderedAt: string;
 };
 
-export type RedNoteContent = {
+export type VariantSelectionEvidence = {
+  selectedVariantId: string;
+  recommendedVariantId: string;
+  selectedAt: string;
+  followedRecommendation: boolean;
+};
+
+export type ContentVariant<T> = {
+  id: string;
+  label: string;
+  rationale: string;
+  content: T;
+};
+
+export type VariantState<T> = {
+  variants?: ContentVariant<T>[];
+  recommendedVariantId?: string;
+  selectedVariantId?: string;
+  variantPreference?: VariantSelectionEvidence;
+};
+
+export type RedNoteContentBase = {
   recommended: boolean;
   recommendedReason?: string | null;
   skipReason: string | null;
@@ -124,13 +146,15 @@ export type RedNoteContent = {
   postingTips: string;
 };
 
+export type RedNoteContent = RedNoteContentBase & VariantState<RedNoteContentBase>;
+
 export type PostImage = {
   url: string;
   generatedAt: string;
   instructions?: string | null;
 };
 
-export type TextPlatformContent = {
+export type TextPlatformContentBase = {
   recommended: boolean;
   recommendedReason?: string | null;
   skipReason: string | null;
@@ -144,15 +168,23 @@ export type TextPlatformContent = {
   image?: PostImage | null;
 };
 
-export type ThreadsContent = TextPlatformContent & {
+export type TextPlatformContent = TextPlatformContentBase & VariantState<TextPlatformContentBase>;
+
+export type ThreadsContentBase = TextPlatformContentBase & {
   topicTag: string;
   topicAlternatives: string[];
 };
+
+export type ThreadsContent = ThreadsContentBase & VariantState<ThreadsContentBase>;
+
+export type PlatformContent = RedNoteContent | ThreadsContent | TextPlatformContent;
+export type PlatformContentBase = RedNoteContentBase | ThreadsContentBase | TextPlatformContentBase;
 
 export type GeneratedContent = {
   contentAnalysis: {
     contentType: string;
     summary: string;
+    projectTitle?: string;
   };
   platforms: {
     rednote?: RedNoteContent;

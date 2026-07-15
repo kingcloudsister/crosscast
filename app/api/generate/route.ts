@@ -8,6 +8,7 @@ import {
   parseJsonFromOpenRouterContent,
 } from "@/lib/openrouter";
 import { sanitizeGeneratedContent } from "@/lib/content-sanitizer";
+import { normalizeGeneratedVariants } from "@/lib/content-variants";
 import { loadRedNoteSlideSpecPrompt, normalizePlatformsShape } from "@/lib/generation-utils";
 
 export const runtime = "nodejs";
@@ -186,7 +187,8 @@ Angle field rule: keep every "angle" concise. It should be a short strategic lab
 {
   "contentAnalysis": {
     "contentType": "string — what type of content this is",
-    "summary": "string — one sentence summary of the raw material"
+    "summary": "string — one sentence summary of the raw material",
+    "projectTitle": "string — a short, specific project name in the source language; 3-8 English words or 6-16 Chinese characters"
   },
   "platforms": {
     "rednote": {
@@ -226,6 +228,14 @@ Angle field rule: keep every "angle" concise. It should be a short strategic lab
 
 Only include platforms that were requested. For platforms you recommend, set recommendedReason to 1-2 concise lines explaining why this platform fits the brief. For platforms you recommend skipping, set recommended to false, recommendedReason to null, provide the skipReason, and optionally suggest an alternative angle that COULD work if the user wants to force it.
 
+## Phase 3 variant contract
+
+For every recommended platform, do not return a single draft at the platform root. Return exactly 3 complete, meaningfully different variants under the variants field. All three variants must express the same core narrative and goal, but use distinct hooks, structures, or levels of directness. Each item must use this shape:
+
+{"id":"variant-1","label":"2-4 word human-readable strategy name","rationale":"one concise sentence explaining the tradeoff","content":{"angle":"...","all other complete platform-specific fields":"..."}}
+
+Use stable ids variant-1, variant-2, and variant-3. Also return recommendedVariantId at the platform root and choose the strongest option for that platform and audience. The platform root still contains recommended, recommendedReason, and skipReason; those decision fields do not need to be repeated inside each variant content. For a skipped platform, return no variants and follow the empty-draft rules above.
+
 IMPORTANT: Respond ONLY with the JSON object. No markdown backticks, no preamble, no explanation outside the JSON. Escape every double quote inside string values as \\" so the response is valid JSON.`;
 
 const allowedPlatforms = new Set<PlatformKey>(["rednote", "threads", "linkedin"]);
@@ -236,6 +246,8 @@ type GenerateRequest = {
   rawMaterial?: unknown;
   additionalContext?: unknown;
   images?: unknown;
+  selectedPlatforms?: unknown;
+  platformsToGenerate?: unknown;
 };
 
 const allPlatforms: PlatformKey[] = ["rednote", "threads", "linkedin"];
@@ -257,25 +269,53 @@ export async function POST(request: Request) {
       rawMaterial: brief.rawMaterial,
       additionalContext: brief.additionalContext,
       images: brief.images,
-      selectedPlatforms: [],
+      selectedPlatforms: brief.selectedPlatforms,
       strategyProfile,
     });
 
-    const generation = sanitizeGeneratedContent(
+    const generatedContent = sanitizeGeneratedContent(
       removeSkippedPlatformDrafts(
-        normalizeGenerationPlatforms(
-          await callOpenRouter({
-            theme: brief.theme,
-            rawMaterial: brief.rawMaterial,
-            additionalContext: brief.additionalContext,
-            images: brief.images,
-            selectedPlatforms: allPlatforms,
-            strategyProfile,
-          }),
-          allPlatforms,
+        normalizeVariantSets(
+          normalizeGenerationPlatforms(
+            await callOpenRouter({
+              theme: brief.theme,
+              rawMaterial: brief.rawMaterial,
+              additionalContext: brief.additionalContext,
+              images: brief.images,
+              selectedPlatforms: brief.platformsToGenerate,
+              strategyProfile,
+            }),
+            brief.platformsToGenerate,
+          ),
         ),
       ),
     );
+
+    const projectTitle = resolveProjectTitle(
+      brief.theme,
+      generatedContent.contentAnalysis.projectTitle,
+      generatedContent.contentAnalysis.summary,
+      brief.rawMaterial,
+    );
+    const generation: GeneratedContent = {
+      ...generatedContent,
+      contentAnalysis: {
+        ...generatedContent.contentAnalysis,
+        projectTitle,
+      },
+    };
+
+    if (projectTitle !== brief.theme) {
+      await saveSession({
+        sessionId,
+        theme: projectTitle,
+        rawMaterial: brief.rawMaterial,
+        additionalContext: brief.additionalContext,
+        images: brief.images,
+        selectedPlatforms: brief.selectedPlatforms,
+        strategyProfile,
+      });
+    }
 
     const generationIds = await saveGenerations(sessionId, generation);
 
@@ -297,9 +337,23 @@ function parseGenerateRequest(body: GenerateRequest) {
   const rawMaterial = stringValue(body.rawMaterial).trim();
   const additionalContext = stringValue(body.additionalContext).trim();
   const images = Array.isArray(body.images) ? (body.images as UploadedImage[]) : [];
+  const selectedPlatforms = parsePlatforms(body.selectedPlatforms, allPlatforms);
+  const platformsToGenerate = parsePlatforms(body.platformsToGenerate, selectedPlatforms);
 
   if (!theme && !rawMaterial) {
     throw new Error("Add a theme or raw material before generating.");
+  }
+
+  if (!selectedPlatforms.length) {
+    throw new Error("Choose at least one platform before generating.");
+  }
+
+  if (!platformsToGenerate.length) {
+    throw new Error("Choose a platform to generate.");
+  }
+
+  if (platformsToGenerate.some((platform) => !selectedPlatforms.includes(platform))) {
+    throw new Error("A generated platform must also be selected for this session.");
   }
 
   return {
@@ -307,7 +361,41 @@ function parseGenerateRequest(body: GenerateRequest) {
     rawMaterial,
     additionalContext,
     images,
+    selectedPlatforms,
+    platformsToGenerate,
   };
+}
+
+function parsePlatforms(value: unknown, fallback: PlatformKey[]): PlatformKey[] {
+  if (value === undefined) return [...fallback];
+  if (!Array.isArray(value)) return [];
+
+  return Array.from(
+    new Set(value.filter((platform): platform is PlatformKey => typeof platform === "string" && allowedPlatforms.has(platform as PlatformKey))),
+  );
+}
+
+function resolveProjectTitle(theme: string, candidate: string | undefined, summary: string, rawMaterial: string) {
+  const existingTheme = cleanProjectTitle(theme);
+  const isProvisional = existingTheme === "Naming this project..." || existingTheme === "Naming this project…";
+
+  if (existingTheme && !isProvisional && existingTheme.length <= 72) {
+    return existingTheme;
+  }
+
+  const generatedTitle = cleanProjectTitle(candidate ?? "");
+  if (generatedTitle) return generatedTitle.slice(0, 72);
+
+  const fallback = cleanProjectTitle(summary || rawMaterial.split("\n").find((line) => line.trim()) || "New content project");
+  return fallback.length > 64 ? `${fallback.slice(0, 61).trim()}…` : fallback;
+}
+
+function cleanProjectTitle(value: string) {
+  return value
+    .replace(/[\r\n]+/g, " ")
+    .replace(/^[\s"'“”‘’]+|[\s"'“”‘’。.!！?？:：]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 async function loadStrategyProfile(): Promise<StrategyProfile | null> {
@@ -441,7 +529,7 @@ async function requestGeneration(
   // Must fit all three platform drafts plus RedNote slide specs; headroom is cheap
   // because output tokens are billed only as produced.
   const response = await createOpenRouterChatCompletion({
-    maxTokens: 12000,
+    maxTokens: 30000,
     temperature: 0.7,
     responseFormat: {
       type: "json_object",
@@ -500,9 +588,7 @@ function buildUserPrompt({
         platformsToEvaluate: selectedPlatforms,
       },
       strategyProfile,
-      instruction: allPlatformsRequested
-        ? "Evaluate and return platform decisions for all three platforms: rednote, threads, and linkedin. The platforms object MUST include rednote, threads, and linkedin. Returning an empty platforms object is invalid. For each platform, set recommended, recommendedReason, and skipReason based on content fit. When recommended is true, recommendedReason must be 1-2 concise lines explaining why this platform fits. For recommended RedNote, return exactly 3 titleOptions with different hook types. For recommended Threads, return topicTag as one primary topic and topicAlternatives as exactly 2 alternatives. Keep angle concise: a short strategic label or phrase, not a paragraph. When recommended is false, set recommendedReason to null and do NOT generate publish-ready post copy; keep the best alternative angle and skipReason, but leave draft fields empty: titleOptions/content/caption/topicTag/postingTips as empty arrays or strings as appropriate and hashtags/carouselSlides/topicAlternatives as empty arrays."
-        : `Generate and return the complete platform entry for ${requestedLabels}. The platforms object MUST include ${requestedLabels}. Returning an empty platforms object is invalid. Set recommended, recommendedReason, and skipReason based on content fit. When recommended is true, recommendedReason must be 1-2 concise lines explaining why this platform fits. For recommended RedNote, return exactly 3 titleOptions with different hook types. For recommended Threads, return topicTag as one primary topic and topicAlternatives as exactly 2 alternatives. Keep angle concise: a short strategic label or phrase, not a paragraph. When recommended is false, set recommendedReason to null and do NOT generate publish-ready post copy; keep the best alternative angle and skipReason, but leave draft fields empty: titleOptions/content/caption/topicTag/postingTips as empty arrays or strings as appropriate and hashtags/carouselSlides/topicAlternatives as empty arrays.`,
+      instruction: `${allPlatformsRequested ? "Evaluate and return all three platforms: rednote, threads, and linkedin." : `Generate and return the complete platform entry for ${requestedLabels}.`} Create contentAnalysis.projectTitle as a short, specific project name in the source language: 3-8 English words or 6-16 Chinese characters, with no trailing punctuation. The platforms object MUST include every requested platform. For each recommended platform, return exactly three complete variants using the Phase 3 variant contract, choose recommendedVariantId, and make the variants meaningfully different while preserving the same narrative and goal. For every RedNote variant, return exactly 3 titleOptions. For every Threads variant, return topicTag plus exactly 2 topicAlternatives. Keep every angle concise. When recommended is false, set recommendedReason to null and do not generate publish-ready variants.`,
     },
     null,
     2,
@@ -585,6 +671,21 @@ function normalizeGenerationPlatforms(generation: GeneratedContent, selectedPlat
     ...generation,
     platforms: normalizedPlatforms,
   };
+}
+
+function normalizeVariantSets(generation: GeneratedContent): GeneratedContent {
+  const platforms: GeneratedContent["platforms"] = {};
+
+  Object.entries(generation.platforms).forEach(([platform, content]) => {
+    if (!content || !allowedPlatforms.has(platform as PlatformKey)) return;
+    const normalized = normalizeGeneratedVariants(platform as PlatformKey, content);
+    if (normalized.recommended && normalized.variants?.length !== 3) {
+      throw new Error(`OpenRouter must return exactly 3 variants for recommended platform: ${platform}.`);
+    }
+    assignPlatformContent(platforms, platform as PlatformKey, normalized);
+  });
+
+  return { ...generation, platforms };
 }
 
 function normalizePlatformKey(platform: string): PlatformKey {

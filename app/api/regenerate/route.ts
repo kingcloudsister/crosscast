@@ -8,6 +8,8 @@ import {
   validateGeneration,
 } from "@/lib/generation-utils";
 import { sanitizePlatformContent } from "@/lib/content-sanitizer";
+import { preserveVariantState } from "@/lib/content-variants";
+import type { PlatformContent } from "@/components/types";
 import {
   buildVisionUserContent,
   createOpenRouterChatCompletion,
@@ -66,11 +68,15 @@ export async function POST(request: Request) {
       previousContent: generationRow.content,
       feedback,
     });
-    const content = sanitizePlatformContent(platform, regenerated.platforms[platform]);
+    const sanitized = sanitizePlatformContent(platform, regenerated.platforms[platform]);
 
-    if (!content) {
+    if (!sanitized) {
       throw new Error("OpenRouter did not return regenerated content for the requested platform.");
     }
+    const content = preserveVariantState(
+      generationRow.content as PlatformContent | null,
+      sanitized as PlatformContent,
+    );
 
     const { error } = await supabaseAdmin
       .from("generations")
