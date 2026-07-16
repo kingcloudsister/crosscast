@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { normalizeLinkedInPostUrl } from "@/lib/linkedin-url";
 import { getContentVariants, selectContentVariant, syncSelectedVariant } from "@/lib/content-variants";
 import { copyToClipboard } from "./clipboard";
-import { ArrowLeftIcon, CheckIcon, CopyIcon, RefreshIcon } from "./icons";
+import { ArrowLeftIcon, CheckIcon, CopyIcon, RefreshIcon, XIcon } from "./icons";
 import { platformMeta } from "./mock-data";
 import type {
   BriefState,
@@ -41,8 +41,43 @@ type EditorViewProps = {
 const platformOrder: PlatformKey[] = ["rednote", "threads", "linkedin"];
 const generateAnywayFeedback =
   "Create the strongest native post for this platform. Do not mention that this platform was previously not recommended, that the user forced generation, or that this is a poor fit.";
-const defaultRegenerationFeedback =
-  "Regenerate this platform draft as a fresh version using the same brief and platform strategy. Keep the platform fit decision and JSON structure, but rewrite the actual post content instead of lightly editing the previous draft.";
+type TextSelection = {
+  start: number;
+  end: number;
+  text: string;
+};
+
+type CaptionFeedbackTarget =
+  | { kind: "overall" }
+  | ({ kind: "selection" } & TextSelection);
+
+type CaptionFeedbackComment = {
+  id: string;
+  target: CaptionFeedbackTarget;
+  feedback: string;
+};
+
+type CommentAnchor = {
+  x: number;
+  y: number;
+};
+
+type ImageFeedbackRegion = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+type ImageFeedbackTarget =
+  | { kind: "overall" }
+  | { kind: "region"; region: ImageFeedbackRegion };
+
+type ImageFeedbackComment = {
+  id: string;
+  target: ImageFeedbackTarget;
+  feedback: string;
+};
 
 export function EditorView({
   brief,
@@ -85,7 +120,9 @@ export function EditorView({
         >
           <ArrowLeftIcon className="h-4 w-4" />
         </button>
-        <p className="min-w-0 flex-1 truncate text-sm font-semibold text-ink">{brief.theme || "Untitled brief"}</p>
+        <p className="min-w-0 flex-1 truncate text-base font-semibold text-ink sm:text-xl">
+          {brief.theme || "Untitled brief"}
+        </p>
         {selectedPlatforms.length ? (
           <span className="shrink-0 rounded-full bg-[#d3eafa]/55 px-2.5 py-1 text-xs font-semibold text-[#536a91]">
             {generatedCount} of {selectedPlatforms.length} generated
@@ -337,7 +374,6 @@ function PlatformReviewCard({
     platform === "threads" ? getSelectedThreadsTopic(content as ThreadsContent) : "",
   );
   const [isSaving, setIsSaving] = useState(false);
-  const [isRegeneratingPlatform, setIsRegeneratingPlatform] = useState(false);
   const [isGeneratingAnyway, setIsGeneratingAnyway] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
   const [isPublishingLinkedIn, setIsPublishingLinkedIn] = useState(false);
@@ -345,11 +381,24 @@ function PlatformReviewCard({
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "selected">("idle");
   const [copyFallbackText, setCopyFallbackText] = useState<string | null>(null);
   const [isSelectingVariant, setIsSelectingVariant] = useState(false);
+  const [captionFeedback, setCaptionFeedback] = useState("");
+  const [captionFeedbackTarget, setCaptionFeedbackTarget] = useState<CaptionFeedbackTarget | null>(null);
+  const [captionFeedbackAnchor, setCaptionFeedbackAnchor] = useState<CommentAnchor | null>(null);
+  const [captionFeedbackCommentsByContext, setCaptionFeedbackCommentsByContext] = useState<
+    Record<string, CaptionFeedbackComment[]>
+  >({});
+  const [isCaptionCommentsOpen, setIsCaptionCommentsOpen] = useState(false);
+  const [reviewedCaptionCommentId, setReviewedCaptionCommentId] = useState<string | null>(null);
+  const [captionVersions, setCaptionVersions] = useState<string[]>(() => [getEditablePostText(platform, content)]);
+  const [captionVersionIndex, setCaptionVersionIndex] = useState(0);
+  const [isUpdatingCaption, setIsUpdatingCaption] = useState(false);
+  const [isNavigatingCaption, setIsNavigatingCaption] = useState(false);
   const [scheduleDateTime, setScheduleDateTime] = useState(() => getSuggestedPostingRecommendation(platform).dateTime);
   const [error, setError] = useState<string | null>(null);
   const scheduleInputRef = useRef<HTMLInputElement | null>(null);
   const editingBaselineRef = useRef<string | null>(null);
   const pendingSaveRef = useRef<Promise<void> | null>(null);
+  const commentGenerationIdRef = useRef<string | null>(generationId);
 
   const displayedContent = ((isEditing || isSaving) && draftContent ? draftContent : content) as PlatformContent;
   const selectedContent =
@@ -363,6 +412,21 @@ function PlatformReviewCard({
   const recommendedReason = getRecommendedReason(platform, displayedContent);
   const postingRecommendation = useMemo(() => getSuggestedPostingRecommendation(platform), [platform]);
   const variants = getContentVariants(content);
+  const feedbackContextKey = content.selectedVariantId ?? "single";
+  const captionFeedbackComments = captionFeedbackCommentsByContext[feedbackContextKey] ?? [];
+  const updateCaptionComments = (
+    updater: (comments: CaptionFeedbackComment[]) => CaptionFeedbackComment[],
+  ) => {
+    setCaptionFeedbackCommentsByContext((commentsByContext) => {
+      const nextComments = updater(commentsByContext[feedbackContextKey] ?? []);
+      if (!nextComments.length) {
+        const nextCommentsByContext = { ...commentsByContext };
+        delete nextCommentsByContext[feedbackContextKey];
+        return nextCommentsByContext;
+      }
+      return { ...commentsByContext, [feedbackContextKey]: nextComments };
+    });
+  };
   useEffect(() => {
     setIsEditing(false);
     setDraftContent(null);
@@ -383,6 +447,27 @@ function PlatformReviewCard({
     setError(null);
     editingBaselineRef.current = null;
   }, [platform, content]);
+
+  useEffect(() => {
+    if (generationId && commentGenerationIdRef.current && generationId !== commentGenerationIdRef.current) {
+      setCaptionFeedbackCommentsByContext({});
+      setIsCaptionCommentsOpen(false);
+      setReviewedCaptionCommentId(null);
+    }
+    if (generationId) commentGenerationIdRef.current = generationId;
+  }, [generationId]);
+
+  useEffect(() => {
+    setCaptionFeedback("");
+    setCaptionFeedbackTarget(null);
+    setCaptionFeedbackAnchor(null);
+    setIsCaptionCommentsOpen(false);
+    setReviewedCaptionCommentId(null);
+    setCaptionVersions([getEditablePostText(platform, content)]);
+    setCaptionVersionIndex(0);
+    // The context key changes when the user switches platform or variant. Caption saves keep the same key.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [feedbackContextKey]);
 
   const copyText = useMemo(() => getPlatformCopy(platform, selectedContent), [selectedContent, platform]);
 
@@ -470,17 +555,102 @@ function PlatformReviewCard({
     }
   };
 
-  const regeneratePlatformDraft = async () => {
-    setIsRegeneratingPlatform(true);
+  const regenerateCaption = async () => {
+    const currentText = getEditablePostText(platform, selectedContent);
+    if (!generationId) {
+      setError("Generate or load a saved post before refining its caption.");
+      return;
+    }
+    const combinedFeedback = formatCaptionFeedbackComments(captionFeedbackComments);
+
+    setIsUpdatingCaption(true);
     setError(null);
     try {
-      await pendingSaveRef.current;
-      await onRegeneratePlatform(platform, defaultRegenerationFeedback);
+      const response = await fetch("/api/feedback/propose", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          generationId,
+          feedback:
+            combinedFeedback ||
+            "Regenerate this caption as a fresh version while preserving the same narrative, facts, and platform fit.",
+          currentText,
+        }),
+      });
+      const data = (await response.json()) as { proposedText?: string; error?: string };
+      if (!response.ok || !data.proposedText) {
+        throw new Error(data.error ?? "Could not regenerate the caption.");
+      }
+      const nextContent = withEditablePostText(platform, selectedContent, data.proposedText);
+      await onSavePlatform(platform, nextContent);
+      const nextVersions = [...captionVersions.slice(0, captionVersionIndex + 1), data.proposedText];
+      setCaptionVersions(nextVersions);
+      setCaptionVersionIndex(nextVersions.length - 1);
+      setIsEditing(false);
+      setDraftContent(null);
+      setCaptionFeedback("");
+      setCaptionFeedbackTarget(null);
+      setCaptionFeedbackAnchor(null);
+      updateCaptionComments(() => []);
+      setIsCaptionCommentsOpen(false);
+      setReviewedCaptionCommentId(null);
     } catch (caughtError) {
-      const message = caughtError instanceof Error ? caughtError.message : "Could not regenerate content.";
-      setError(message);
+      setError(caughtError instanceof Error ? caughtError.message : "Could not regenerate the caption.");
     } finally {
-      setIsRegeneratingPlatform(false);
+      setIsUpdatingCaption(false);
+    }
+  };
+
+  const addCaptionComment = () => {
+    if (!captionFeedbackTarget || !captionFeedback.trim()) return;
+    updateCaptionComments((comments) => [
+      ...comments,
+      {
+        id: createFeedbackId(),
+        target: captionFeedbackTarget,
+        feedback: captionFeedback.trim(),
+      },
+    ]);
+    setCaptionFeedback("");
+    setCaptionFeedbackTarget(null);
+    setCaptionFeedbackAnchor(null);
+  };
+
+  const updateCaptionComment = (id: string, feedback: string) => {
+    updateCaptionComments((comments) =>
+      comments.map((comment) => (comment.id === id ? { ...comment, feedback } : comment)),
+    );
+  };
+
+  const deleteCaptionComment = (id: string) => {
+    if (captionFeedbackComments.length === 1) setIsCaptionCommentsOpen(false);
+    if (reviewedCaptionCommentId === id) setReviewedCaptionCommentId(null);
+    updateCaptionComments((comments) => comments.filter((comment) => comment.id !== id));
+  };
+
+  const showCaptionVersion = async (nextIndex: number) => {
+    if (
+      nextIndex < 0 ||
+      nextIndex >= captionVersions.length ||
+      nextIndex === captionVersionIndex ||
+      isNavigatingCaption ||
+      isUpdatingCaption
+    ) {
+      return;
+    }
+
+    setIsNavigatingCaption(true);
+    setError(null);
+    try {
+      const nextContent = withEditablePostText(platform, selectedContent, captionVersions[nextIndex]);
+      await onSavePlatform(platform, nextContent);
+      setCaptionVersionIndex(nextIndex);
+      setIsEditing(false);
+      setDraftContent(null);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "Could not switch caption versions.");
+    } finally {
+      setIsNavigatingCaption(false);
     }
   };
 
@@ -555,15 +725,67 @@ function PlatformReviewCard({
   const contentActions = (
     <div className="flex flex-wrap items-center justify-end gap-1.5">
       <ContentFieldAction
+        label="←"
+        ariaLabel="Previous caption version"
+        onClick={() => void showCaptionVersion(captionVersionIndex - 1)}
+        disabled={captionVersionIndex === 0 || isNavigatingCaption || isUpdatingCaption}
+      />
+      <ContentFieldAction
+        label="→"
+        ariaLabel="Next caption version"
+        onClick={() => void showCaptionVersion(captionVersionIndex + 1)}
+        disabled={
+          captionVersionIndex === captionVersions.length - 1 || isNavigatingCaption || isUpdatingCaption
+        }
+      />
+      <ContentFieldAction
         icon={<CopyIcon className="h-3.5 w-3.5" />}
         label={copyStatus === "copied" ? "Copied" : copyStatus === "selected" ? "Selected" : "Copy"}
         onClick={handleCopy}
       />
+      {captionFeedbackComments.length ? (
+        <div className="relative">
+          <ContentFieldAction
+            label={`Comments (${captionFeedbackComments.length})`}
+            ariaLabel="Review caption comments"
+            onClick={() => {
+              setIsCaptionCommentsOpen((isOpen) => !isOpen);
+              setReviewedCaptionCommentId(null);
+            }}
+          />
+          {isCaptionCommentsOpen ? (
+            <QueuedCommentsPopover
+              ariaLabel="Caption comments"
+              comments={captionFeedbackComments.map((comment) => ({
+                id: comment.id,
+                label: comment.target.kind === "selection" ? "Selected text" : "Whole caption",
+                feedback: comment.feedback,
+                context: comment.target.kind === "selection" ? comment.target.text : undefined,
+                canReveal:
+                  comment.target.kind === "selection"
+                    ? Boolean(resolveTextSelection(getEditablePostText(platform, selectedContent), comment.target))
+                    : false,
+                revealLabel: "Show in caption →",
+                unavailableLabel: "Passage changed",
+                revealAriaLabel: "Show selected text",
+              }))}
+              activeCommentId={reviewedCaptionCommentId}
+              onChange={updateCaptionComment}
+              onDelete={deleteCaptionComment}
+              onReveal={setReviewedCaptionCommentId}
+              onClose={() => {
+                setIsCaptionCommentsOpen(false);
+                setReviewedCaptionCommentId(null);
+              }}
+            />
+          ) : null}
+        </div>
+      ) : null}
       <ContentFieldAction
-        icon={<RefreshIcon className="h-3.5 w-3.5" />}
-        label={isRegeneratingPlatform ? "Regenerating…" : "Regenerate"}
-        onClick={regeneratePlatformDraft}
-        disabled={isRegeneratingPlatform}
+        icon={<RefreshIcon className={`h-3.5 w-3.5 ${isUpdatingCaption ? "animate-spin" : ""}`} />}
+        label={isUpdatingCaption ? "Regenerating…" : "Regenerate"}
+        onClick={() => void regenerateCaption()}
+        disabled={isUpdatingCaption || isNavigatingCaption}
       />
       {isSaving ? (
         <span aria-live="polite" className="px-1 text-xs font-semibold text-[#9096b0]">
@@ -572,6 +794,37 @@ function PlatformReviewCard({
       ) : null}
     </div>
   );
+
+  const captionFeedbackComposer = captionFeedbackTarget && captionFeedbackAnchor ? (
+    <CaptionFeedbackComposer
+      feedback={captionFeedback}
+      target={captionFeedbackTarget}
+      anchor={captionFeedbackAnchor}
+      onFeedbackChange={setCaptionFeedback}
+      onClose={() => {
+        setCaptionFeedbackTarget(null);
+        setCaptionFeedbackAnchor(null);
+        setCaptionFeedback("");
+      }}
+      onAdd={addCaptionComment}
+    />
+  ) : null;
+
+  const openOverallCaptionFeedback = (anchor: CommentAnchor) => {
+    setCaptionFeedbackTarget({ kind: "overall" });
+    setCaptionFeedbackAnchor(anchor);
+    setCaptionFeedback("");
+    setError(null);
+  };
+  const reviewedCaptionComment = captionFeedbackComments.find(
+    (comment) => comment.id === reviewedCaptionCommentId && comment.target.kind === "selection",
+  );
+  const highlightedCaptionSelection =
+    captionFeedbackTarget?.kind === "selection"
+      ? captionFeedbackTarget
+      : reviewedCaptionComment?.target.kind === "selection"
+        ? resolveTextSelection(getEditablePostText(platform, selectedContent), reviewedCaptionComment.target)
+        : null;
 
   const platformDraftPanel = isRecommended ? (
     platform === "rednote" ? (
@@ -582,9 +835,18 @@ function PlatformReviewCard({
         generationId={generationId}
         briefImages={briefImages}
         contentActions={contentActions}
+        captionFeedbackComposer={captionFeedbackComposer}
+        highlightedCaptionSelection={highlightedCaptionSelection}
         onBeginEdit={isSaving ? undefined : startEditing}
         onCommit={() => void saveEditing()}
         onSelectTitle={selectRedNoteTitle}
+        onCommentOverall={openOverallCaptionFeedback}
+        onCommentSelection={(selection, anchor) => {
+          setCaptionFeedbackTarget({ kind: "selection", ...selection });
+          setCaptionFeedbackAnchor(anchor);
+          setCaptionFeedback("");
+          setError(null);
+        }}
         onChange={(next) => (isEditing ? setDraftContent(next) : onPatchPlatform("rednote", next))}
         onSlideRevised={(slideNumber, spec, slideImage) => {
           const base = content as RedNoteContent;
@@ -622,9 +884,18 @@ function PlatformReviewCard({
         platform={platform}
         selectedThreadsTopic={selectedThreadsTopic}
         contentActions={contentActions}
+        captionFeedbackComposer={captionFeedbackComposer}
+        highlightedCaptionSelection={highlightedCaptionSelection}
         onBeginEdit={isSaving ? undefined : startEditing}
         onCommit={() => void saveEditing()}
         onSelectThreadsTopic={selectThreadsTopic}
+        onCommentOverall={openOverallCaptionFeedback}
+        onCommentSelection={(selection, anchor) => {
+          setCaptionFeedbackTarget({ kind: "selection", ...selection });
+          setCaptionFeedbackAnchor(anchor);
+          setCaptionFeedback("");
+          setError(null);
+        }}
         onChange={setDraftContent}
       />
     )
@@ -778,9 +1049,8 @@ function VariantRail({
 
   return (
     <aside className="rounded-xl border border-[#8bade4]/30 bg-[#f7faff] p-3 lg:sticky lg:top-20">
-      <div className="px-1 pb-3">
+      <div className="px-1 pb-2.5">
         <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#6f89b4]">Variants</p>
-        <p className="mt-1 text-xs leading-5 text-muted">Choose a tone and structure. The full draft updates on the right.</p>
       </div>
       <div className="grid gap-2.5 sm:grid-cols-3 lg:grid-cols-1">
         {variants.map((variant, index) => {
@@ -793,7 +1063,7 @@ function VariantRail({
               aria-pressed={isSelected}
               disabled={isSaving}
               onClick={() => onChoose(variant.id)}
-              className={`group min-h-32 rounded-lg border p-3 text-left transition disabled:cursor-wait disabled:opacity-70 ${
+              className={`group rounded-lg border p-3 text-left transition disabled:cursor-wait disabled:opacity-70 ${
                 isSelected
                   ? "border-[#8bade4] bg-white shadow-[0_5px_16px_rgba(83,106,145,0.12)] ring-2 ring-[#8bade4]/15"
                   : "border-line bg-white/80 hover:border-[#8bade4]/65 hover:bg-white"
@@ -806,7 +1076,6 @@ function VariantRail({
                 {isSelected ? <span className="text-xs font-bold text-[#6f89b4]">✓</span> : null}
               </div>
               <p className="mt-1.5 text-sm font-bold leading-5 text-ink">{variant.label}</p>
-              <p className="mt-1.5 text-xs leading-5 text-muted">{variant.rationale}</p>
               {isRecommended ? (
                 <span className="mt-2 inline-flex rounded-full bg-[#d3eafa] px-2 py-0.5 text-[10px] font-bold text-[#536a91]">
                   Crosscast recommends
@@ -827,9 +1096,13 @@ function RedNotePanel({
   generationId,
   briefImages,
   contentActions,
+  captionFeedbackComposer,
+  highlightedCaptionSelection,
   onBeginEdit,
   onCommit,
   onSelectTitle,
+  onCommentOverall,
+  onCommentSelection,
   onChange,
   onSlideRevised,
   onRendered,
@@ -840,9 +1113,13 @@ function RedNotePanel({
   generationId: string | null;
   briefImages: BriefState["images"];
   contentActions: React.ReactNode;
+  captionFeedbackComposer: React.ReactNode;
+  highlightedCaptionSelection: TextSelection | null;
   onBeginEdit?: () => void;
   onCommit: () => void;
   onSelectTitle: (index: number) => void;
+  onCommentOverall: (anchor: CommentAnchor) => void;
+  onCommentSelection: (selection: TextSelection, anchor: CommentAnchor) => void;
   onChange: (content: RedNoteContent) => void;
   onSlideRevised: (
     slideNumber: number,
@@ -938,11 +1215,15 @@ function RedNotePanel({
         rows={7}
         isEditing={isEditing}
         actions={contentActions}
+        highlightSelection={highlightedCaptionSelection}
         onBeginEdit={onBeginEdit}
         onBlur={onCommit}
+        onCommentOverall={onCommentOverall}
+        onCommentSelection={onCommentSelection}
         autoFocus
         onChange={(value) => onChange({ ...content, caption: value })}
       />
+      {captionFeedbackComposer}
 
       <CarouselSection
         content={content}
@@ -1042,7 +1323,7 @@ function CarouselSection({
       onRendered(data.slideImages, data.backgrounds ?? []);
     } catch (caughtError) {
       const message = caughtError instanceof Error ? caughtError.message : "Could not generate the carousel images.";
-      setError(message);
+      setError(getFriendlyImageError(message));
     } finally {
       setIsBusy(false);
     }
@@ -1081,7 +1362,7 @@ function CarouselSection({
       setComment("");
     } catch (caughtError) {
       const message = caughtError instanceof Error ? caughtError.message : "Could not update the slide.";
-      setError(message);
+      setError(getFriendlyImageError(message));
     } finally {
       setIsBusy(false);
     }
@@ -1173,7 +1454,7 @@ function CarouselSection({
               className="min-w-0 flex-1 rounded-md border border-line bg-white px-3 py-2 text-sm leading-6 text-ink outline-none focus:border-violet/50 focus:ring-4 focus:ring-violet/10"
             />
             <ActionButton
-              label={isBusy ? "..." : "Apply"}
+              label={isBusy ? "Applying feedback…" : "Apply feedback + regenerate"}
               onClick={applyComment}
               disabled={isBusy || !comment.trim()}
               strong
@@ -1221,7 +1502,9 @@ function CarouselSection({
       ) : null}
 
       {error ? (
-        <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>
+        <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm leading-6 text-rose-700">
+          {error} Your feedback is still here so you can retry.
+        </p>
       ) : null}
     </div>
   );
@@ -1233,9 +1516,13 @@ function TextPlatformPanel({
   platform,
   selectedThreadsTopic,
   contentActions,
+  captionFeedbackComposer,
+  highlightedCaptionSelection,
   onBeginEdit,
   onCommit,
   onSelectThreadsTopic,
+  onCommentOverall,
+  onCommentSelection,
   onChange,
 }: {
   content: TextPlatformContent;
@@ -1243,9 +1530,13 @@ function TextPlatformPanel({
   platform: PlatformKey;
   selectedThreadsTopic: string;
   contentActions: React.ReactNode;
+  captionFeedbackComposer: React.ReactNode;
+  highlightedCaptionSelection: TextSelection | null;
   onBeginEdit?: () => void;
   onCommit: () => void;
   onSelectThreadsTopic: (topic: string) => void;
+  onCommentOverall: (anchor: CommentAnchor) => void;
+  onCommentSelection: (selection: TextSelection, anchor: CommentAnchor) => void;
   onChange: (content: TextPlatformContent) => void;
 }) {
   const displayedAngle = cleanInternalWorkflowPhrases(content.angle);
@@ -1259,17 +1550,6 @@ function TextPlatformPanel({
         isEditing={false}
         onChange={(value) => onChange({ ...content, angle: cleanInternalWorkflowPhrases(value) })}
       />
-      <EditableBlock
-        label="Post Text"
-        value={content.content}
-        rows={9}
-        isEditing={isEditing}
-        actions={contentActions}
-        onBeginEdit={onBeginEdit}
-        onBlur={onCommit}
-        autoFocus
-        onChange={(value) => onChange({ ...content, content: value })}
-      />
       {platform === "threads" ? (
         <ThreadsTopicSection
           content={content as ThreadsContent}
@@ -1279,7 +1559,79 @@ function TextPlatformPanel({
           onChange={(nextContent) => onChange(nextContent)}
         />
       ) : null}
+      <EditableBlock
+        label="Post Text"
+        value={content.content}
+        rows={9}
+        isEditing={isEditing}
+        actions={contentActions}
+        highlightSelection={highlightedCaptionSelection}
+        onBeginEdit={onBeginEdit}
+        onBlur={onCommit}
+        onCommentOverall={onCommentOverall}
+        onCommentSelection={onCommentSelection}
+        autoFocus
+        onChange={(value) => onChange({ ...content, content: value })}
+      />
+      {captionFeedbackComposer}
     </div>
+  );
+}
+
+function CaptionFeedbackComposer({
+  feedback,
+  target,
+  anchor,
+  onFeedbackChange,
+  onClose,
+  onAdd,
+}: {
+  feedback: string;
+  target: CaptionFeedbackTarget;
+  anchor: CommentAnchor;
+  onFeedbackChange: (value: string) => void;
+  onClose: () => void;
+  onAdd: () => void;
+}) {
+  return (
+    <section
+      role="dialog"
+      aria-label={target.kind === "selection" ? "Selected text feedback" : "Caption feedback comment"}
+      style={{ left: anchor.x, top: anchor.y }}
+      className="fixed z-50 max-h-[calc(100vh-1.5rem)] w-[min(22rem,calc(100vw-1.5rem))] overflow-y-auto rounded-xl border border-[#8bade4]/45 bg-white p-3.5 shadow-[0_18px_48px_rgba(38,50,77,0.22)]"
+    >
+      <p className="pr-9 text-sm font-bold text-ink">What do you want to change?</p>
+      <button
+        type="button"
+        aria-label="Close caption feedback"
+        onClick={onClose}
+        className="absolute right-3 top-3 grid h-7 w-7 place-items-center rounded-full text-muted transition hover:bg-[#f7faff] hover:text-ink"
+      >
+        <XIcon className="h-4 w-4" />
+      </button>
+
+      <div className="mt-3 space-y-2">
+        <label className="min-w-0 flex-1">
+          <span className="sr-only">Caption feedback</span>
+          <textarea
+            value={feedback}
+            onChange={(event) => onFeedbackChange(event.target.value)}
+            autoFocus
+            rows={3}
+            placeholder="Add feedback…"
+            className="w-full resize-none rounded-md border border-line bg-white px-3 py-2 text-sm leading-5 text-ink outline-none focus:border-violet/50 focus:ring-4 focus:ring-violet/10"
+          />
+        </label>
+        <div className="flex justify-end">
+          <ActionButton
+            label="Add comment"
+            onClick={onAdd}
+            disabled={!feedback.trim()}
+            strong
+          />
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -1297,13 +1649,89 @@ function LinkedInImageSection({
   onImageChange: (image: PostImage) => void;
 }) {
   const image = content.image ?? null;
-  const [instructions, setInstructions] = useState(image?.instructions ?? "");
+  const [instructions, setInstructions] = useState("");
+  const [feedbackTarget, setFeedbackTarget] = useState<ImageFeedbackTarget | null>(null);
+  const [feedbackAnchor, setFeedbackAnchor] = useState<CommentAnchor | null>(null);
+  const [feedbackComments, setFeedbackComments] = useState<ImageFeedbackComment[]>([]);
+  const [isCommentsOpen, setIsCommentsOpen] = useState(false);
+  const [reviewedImageCommentId, setReviewedImageCommentId] = useState<string | null>(null);
+  const [draftRegion, setDraftRegion] = useState<ImageFeedbackRegion | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const imageFrameRef = useRef<HTMLDivElement | null>(null);
+  const dragStartRef = useRef<{ x: number; y: number } | null>(null);
+  const suppressContextMenuRef = useRef(false);
 
   useEffect(() => {
-    setInstructions(image?.instructions ?? "");
-  }, [image]);
+    setInstructions("");
+    setFeedbackTarget(null);
+    setFeedbackAnchor(null);
+    setFeedbackComments([]);
+    setIsCommentsOpen(false);
+    setReviewedImageCommentId(null);
+    setDraftRegion(null);
+  }, [image?.url]);
+
+  const getImagePoint = (clientX: number, clientY: number) => {
+    const rect = imageFrameRef.current?.getBoundingClientRect();
+    if (!rect?.width || !rect.height) return null;
+    return {
+      x: Math.min(1, Math.max(0, (clientX - rect.left) / rect.width)),
+      y: Math.min(1, Math.max(0, (clientY - rect.top) / rect.height)),
+    };
+  };
+
+  const getRegion = (start: { x: number; y: number }, end: { x: number; y: number }): ImageFeedbackRegion => ({
+    x: Math.min(start.x, end.x),
+    y: Math.min(start.y, end.y),
+    width: Math.abs(end.x - start.x),
+    height: Math.abs(end.y - start.y),
+  });
+
+  const openOverallFeedback = (anchor: CommentAnchor) => {
+    setFeedbackTarget({ kind: "overall" });
+    setFeedbackAnchor(anchor);
+    setDraftRegion(null);
+    setInstructions("");
+    setError(null);
+  };
+
+  const describeTarget = (target: ImageFeedbackTarget, feedback: string) => {
+    if (target.kind !== "region") return `Overall image comment: ${feedback}`;
+    const { x, y, width, height } = target.region;
+    return [
+      "Use current_generated_image as the visual baseline. Apply the following feedback specifically to this region while preserving the rest of the composition as closely as possible.",
+      `Region coordinates measured from the top-left: x ${Math.round(x * 100)}%, y ${Math.round(y * 100)}%, width ${Math.round(width * 100)}%, height ${Math.round(height * 100)}%.`,
+      feedback,
+    ].join(" ");
+  };
+
+  const addImageComment = () => {
+    if (!feedbackTarget || !instructions.trim()) return;
+    setFeedbackComments((comments) => [
+      ...comments,
+      { id: createFeedbackId(), target: feedbackTarget, feedback: instructions.trim() },
+    ]);
+    setFeedbackTarget(null);
+    setFeedbackAnchor(null);
+    setDraftRegion(null);
+    setInstructions("");
+  };
+
+  const updateImageComment = (id: string, feedback: string) => {
+    setFeedbackComments((comments) =>
+      comments.map((comment) => (comment.id === id ? { ...comment, feedback } : comment)),
+    );
+  };
+
+  const deleteImageComment = (id: string) => {
+    if (reviewedImageCommentId === id) setReviewedImageCommentId(null);
+    setFeedbackComments((comments) => {
+      const nextComments = comments.filter((comment) => comment.id !== id);
+      if (!nextComments.length) setIsCommentsOpen(false);
+      return nextComments;
+    });
+  };
 
   const generate = async () => {
     if (!generationId) {
@@ -1314,6 +1742,9 @@ function LinkedInImageSection({
     setIsGenerating(true);
     setError(null);
     try {
+      const combinedInstructions = feedbackComments
+        .map((comment) => describeTarget(comment.target, comment.feedback))
+        .join("\n");
       const response = await fetch("/api/linkedin/image", {
         method: "POST",
         headers: {
@@ -1323,7 +1754,8 @@ function LinkedInImageSection({
           generationId,
           postText,
           images: briefImages,
-          instructions: instructions.trim() || undefined,
+          currentImageUrl: image?.url,
+          instructions: combinedInstructions || undefined,
         }),
       });
       const data = (await response.json()) as { image?: PostImage; error?: string };
@@ -1333,9 +1765,16 @@ function LinkedInImageSection({
       }
 
       onImageChange(data.image);
+      setFeedbackTarget(null);
+      setFeedbackAnchor(null);
+      setFeedbackComments([]);
+      setIsCommentsOpen(false);
+      setReviewedImageCommentId(null);
+      setDraftRegion(null);
+      setInstructions("");
     } catch (caughtError) {
       const message = caughtError instanceof Error ? caughtError.message : "Could not generate the LinkedIn image.";
-      setError(message);
+      setError(getFriendlyImageError(message));
     } finally {
       setIsGenerating(false);
     }
@@ -1345,18 +1784,150 @@ function LinkedInImageSection({
     <div className="mt-5 rounded-md border border-line bg-canvas p-3">
       <div className="flex items-center justify-between gap-2">
         <p className="text-sm font-semibold text-ink">Post Image</p>
-        <ActionButton
-          icon={<RefreshIcon className="h-4 w-4" />}
-          label={isGenerating ? "Generating..." : image ? "Regenerate" : "Generate image"}
-          onClick={generate}
-          disabled={isGenerating}
-          strong={!image}
-        />
+        <div className="flex items-center gap-2">
+          {feedbackComments.length ? (
+            <div className="relative">
+              <ActionButton
+                label={`Comments (${feedbackComments.length})`}
+                onClick={() => {
+                  setIsCommentsOpen((isOpen) => !isOpen);
+                  setReviewedImageCommentId(null);
+                }}
+              />
+              {isCommentsOpen ? (
+                <QueuedCommentsPopover
+                  ariaLabel="Image comments"
+                  comments={feedbackComments.map((comment, index) => {
+                    const regionNumber = feedbackComments
+                      .slice(0, index + 1)
+                      .filter((queuedComment) => queuedComment.target.kind === "region").length;
+                    return {
+                      id: comment.id,
+                      label: comment.target.kind === "region" ? `Marked area ${regionNumber}` : "Whole image",
+                      feedback: comment.feedback,
+                      canReveal: comment.target.kind === "region",
+                      revealLabel: comment.target.kind === "region" ? "Show on image →" : undefined,
+                      revealAriaLabel:
+                        comment.target.kind === "region" ? `Show marked area ${regionNumber}` : undefined,
+                    };
+                  })}
+                  activeCommentId={reviewedImageCommentId}
+                  onChange={updateImageComment}
+                  onDelete={deleteImageComment}
+                  onReveal={setReviewedImageCommentId}
+                  onClose={() => {
+                    setIsCommentsOpen(false);
+                    setReviewedImageCommentId(null);
+                  }}
+                />
+              ) : null}
+            </div>
+          ) : null}
+          <ActionButton
+            icon={<RefreshIcon className={`h-4 w-4 ${isGenerating ? "animate-spin" : ""}`} />}
+            label={isGenerating ? (image ? "Regenerating…" : "Generating…") : image ? "Regenerate" : "Generate image"}
+            onClick={generate}
+            disabled={isGenerating}
+            strong={!image}
+          />
+        </div>
       </div>
 
       {image ? (
-        <div className="mt-3 overflow-hidden rounded-md border border-line bg-white">
-          <img src={image.url} alt="Generated LinkedIn post image" className="w-full object-contain" />
+        <div
+          ref={imageFrameRef}
+          onPointerDown={(event) => {
+            if (event.button !== 2) return;
+            const point = getImagePoint(event.clientX, event.clientY);
+            if (!point) return;
+            setFeedbackTarget(null);
+            setFeedbackAnchor(null);
+            setInstructions("");
+            dragStartRef.current = point;
+            setDraftRegion({ ...point, width: 0, height: 0 });
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }}
+          onPointerMove={(event) => {
+            if (!dragStartRef.current || (event.buttons & 2) === 0) return;
+            const point = getImagePoint(event.clientX, event.clientY);
+            if (!point) return;
+            setDraftRegion(getRegion(dragStartRef.current, point));
+          }}
+          onPointerUp={(event) => {
+            if (event.button !== 2 || !dragStartRef.current) return;
+            const point = getImagePoint(event.clientX, event.clientY);
+            const region = point ? getRegion(dragStartRef.current, point) : null;
+            dragStartRef.current = null;
+            if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+              event.currentTarget.releasePointerCapture(event.pointerId);
+            }
+            if (region && region.width >= 0.02 && region.height >= 0.02) {
+              suppressContextMenuRef.current = true;
+              setDraftRegion(region);
+              setFeedbackTarget({ kind: "region", region });
+              setFeedbackAnchor(getCommentBubbleAnchor(event.clientX, event.clientY));
+              setInstructions("");
+              setError(null);
+            } else {
+              setDraftRegion(null);
+            }
+          }}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            if (suppressContextMenuRef.current) {
+              suppressContextMenuRef.current = false;
+              return;
+            }
+            openOverallFeedback(getCommentBubbleAnchor(event.clientX, event.clientY));
+          }}
+          className="relative mt-3 overflow-hidden rounded-md border border-line bg-white select-none"
+        >
+          <img
+            src={image.url}
+            alt="Generated LinkedIn post image"
+            draggable={false}
+            className="pointer-events-none w-full object-contain"
+          />
+          {draftRegion ? (
+            <span
+              aria-label="Selected image feedback area"
+              className="pointer-events-none absolute border-2 border-[#5f8fe0] bg-[#8bade4]/20 shadow-[0_0_0_1px_rgba(255,255,255,0.9)]"
+              style={{
+                left: `${draftRegion.x * 100}%`,
+                top: `${draftRegion.y * 100}%`,
+                width: `${draftRegion.width * 100}%`,
+                height: `${draftRegion.height * 100}%`,
+              }}
+            />
+          ) : null}
+          {feedbackComments.map((comment, index) => {
+            if (comment.target.kind !== "region") return null;
+            const regionNumber = feedbackComments
+              .slice(0, index + 1)
+              .filter((queuedComment) => queuedComment.target.kind === "region").length;
+            const isActive = reviewedImageCommentId === comment.id;
+            return (
+              <span
+                key={comment.id}
+                aria-label={`Marked image feedback area ${regionNumber}`}
+                className={`pointer-events-none absolute shadow-[0_0_0_1px_rgba(255,255,255,0.9)] transition ${
+                  isActive
+                    ? "border-[3px] border-[#4f7fd1] bg-[#8bade4]/30 ring-4 ring-[#8bade4]/20"
+                    : "border-2 border-[#5f8fe0] bg-[#8bade4]/20"
+                }`}
+                style={{
+                  left: `${comment.target.region.x * 100}%`,
+                  top: `${comment.target.region.y * 100}%`,
+                  width: `${comment.target.region.width * 100}%`,
+                  height: `${comment.target.region.height * 100}%`,
+                }}
+              >
+                <span className="absolute left-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-[#5f8fe0] text-[10px] font-bold text-white shadow-sm">
+                  {regionNumber}
+                </span>
+              </span>
+            );
+          })}
         </div>
       ) : (
         <p className="mt-3 rounded-md border border-dashed border-line bg-white px-3 py-4 text-sm leading-6 text-muted">
@@ -1364,18 +1935,55 @@ function LinkedInImageSection({
         </p>
       )}
 
-      {image ? (
-        <textarea
-          value={instructions}
-          onChange={(event) => setInstructions(event.target.value)}
-          rows={2}
-          placeholder='What should change? e.g. "use the analytics screenshot as the hero", "no text in the image" — then Regenerate'
-          className="mt-2 w-full rounded-md border border-line bg-white px-3 py-2 text-sm leading-6 text-ink outline-none focus:border-violet/50 focus:ring-4 focus:ring-violet/10"
-        />
+      {image && feedbackTarget && feedbackAnchor ? (
+        <section
+          role="dialog"
+          aria-label={feedbackTarget.kind === "region" ? "Selected image area feedback" : "Image feedback comment"}
+          style={{ left: feedbackAnchor.x, top: feedbackAnchor.y }}
+          className="fixed z-50 max-h-[calc(100vh-1.5rem)] w-[min(22rem,calc(100vw-1.5rem))] overflow-y-auto rounded-xl border border-[#8bade4]/45 bg-white p-3.5 shadow-[0_18px_48px_rgba(38,50,77,0.22)]"
+        >
+          <p className="pr-9 text-sm font-bold text-ink">What do you want to change?</p>
+          <button
+            type="button"
+            aria-label="Close image feedback"
+            onClick={() => {
+              setFeedbackTarget(null);
+              setFeedbackAnchor(null);
+              setDraftRegion(null);
+              setInstructions("");
+            }}
+            className="absolute right-3 top-3 grid h-7 w-7 place-items-center rounded-full text-muted transition hover:bg-[#f7faff] hover:text-ink"
+          >
+            <XIcon className="h-4 w-4" />
+          </button>
+          <div className="mt-3 space-y-2">
+            <label className="min-w-0 flex-1">
+              <span className="sr-only">Image feedback</span>
+              <textarea
+                autoFocus
+                value={instructions}
+                onChange={(event) => setInstructions(event.target.value)}
+                rows={2}
+                placeholder="Add feedback…"
+                className="w-full resize-none rounded-md border border-line bg-white px-3 py-2 text-sm leading-5 text-ink outline-none focus:border-violet/50 focus:ring-4 focus:ring-violet/10"
+              />
+            </label>
+            <div className="flex justify-end">
+              <ActionButton
+                label="Add comment"
+                onClick={addImageComment}
+                disabled={!instructions.trim()}
+                strong
+              />
+            </div>
+          </div>
+        </section>
       ) : null}
 
       {error ? (
-        <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>
+        <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm leading-6 text-rose-700">
+          {error} Your feedback is still here so you can retry.
+        </p>
       ) : null}
     </div>
   );
@@ -1471,8 +2079,11 @@ function EditableBlock({
   rows,
   isEditing,
   actions,
+  highlightSelection,
   onBeginEdit,
   onBlur,
+  onCommentOverall,
+  onCommentSelection,
   autoFocus = false,
   onChange,
 }: {
@@ -1481,18 +2092,33 @@ function EditableBlock({
   rows: number;
   isEditing: boolean;
   actions?: React.ReactNode;
+  highlightSelection?: TextSelection | null;
   onBeginEdit?: () => void;
   onBlur?: () => void;
+  onCommentOverall?: (anchor: CommentAnchor) => void;
+  onCommentSelection?: (selection: TextSelection, anchor: CommentAnchor) => void;
   autoFocus?: boolean;
   onChange?: (value: string) => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const minimumHeight = rows * 24 + 18;
 
-  useEffect(() => {
-    if (!isEditing || !textareaRef.current) return;
+  const captureSelection = (textarea: HTMLTextAreaElement) => {
+    if (!onCommentSelection || textarea.selectionStart === textarea.selectionEnd) {
+      return null;
+    }
 
-    resizeTextareaToContent(textareaRef.current);
-  }, [isEditing, value]);
+    const selection = {
+      start: textarea.selectionStart,
+      end: textarea.selectionEnd,
+      text: textarea.value.slice(textarea.selectionStart, textarea.selectionEnd),
+    };
+    if (!selection.text.trim()) {
+      return null;
+    }
+
+    return selection;
+  };
 
   return (
     <div className="block">
@@ -1500,52 +2126,219 @@ function EditableBlock({
         <span className="block text-sm font-semibold text-ink">{label}</span>
         {actions}
       </span>
-      {isEditing ? (
-        <textarea
-          ref={textareaRef}
-          autoFocus={autoFocus}
-          aria-label={label || undefined}
-          value={value}
-          onChange={(event) => {
-            resizeTextareaToContent(event.currentTarget);
-            onChange?.(event.currentTarget.value);
-          }}
-          onBlur={onBlur}
-          rows={rows}
-          className="w-full resize-none overflow-hidden rounded-md border border-line bg-white px-3 py-2 text-sm leading-6 text-ink outline-none focus:border-violet/50 focus:ring-4 focus:ring-violet/10"
-        />
-      ) : onBeginEdit ? (
-        <button
-          type="button"
-          onClick={onBeginEdit}
-          aria-label={`Edit ${label.toLowerCase()}`}
-          className="w-full cursor-text whitespace-pre-wrap rounded-md border border-line bg-white px-3 py-2 text-left text-sm leading-6 text-ink transition hover:border-[#8bade4]/65 hover:bg-[#fefdf8]"
+      <div className="grid w-full" style={{ minHeight: minimumHeight }}>
+        <div
+          aria-hidden="true"
+          className="invisible col-start-1 row-start-1 whitespace-pre-wrap rounded-md border border-transparent px-3 py-2 text-sm leading-6"
         >
-          {value}
-        </button>
-      ) : (
-        <div className="w-full whitespace-pre-wrap rounded-md border border-line bg-white px-3 py-2 text-left text-sm leading-6 text-ink">
-          {value}
+          {value || "\u200b"}
         </div>
-      )}
+        {highlightSelection ? (
+          <div
+            aria-label={`${label} with selected text highlighted`}
+            className="col-start-1 row-start-1 h-full w-full whitespace-pre-wrap rounded-md border border-[#8bade4]/55 bg-white px-3 py-2 text-left text-sm leading-6 text-ink ring-4 ring-[#8bade4]/10"
+          >
+            {value.slice(0, highlightSelection.start)}
+            <mark className="rounded-sm bg-[#d3eafa] px-0.5 text-ink">
+              {value.slice(highlightSelection.start, highlightSelection.end)}
+            </mark>
+            {value.slice(highlightSelection.end)}
+          </div>
+        ) : isEditing ? (
+          <textarea
+            ref={textareaRef}
+            autoFocus={autoFocus}
+            aria-label={label || undefined}
+            value={value}
+            onChange={(event) => onChange?.(event.currentTarget.value)}
+            onContextMenu={(event) => {
+              if (!onCommentOverall && !onCommentSelection) return;
+              event.preventDefault();
+              const selection = captureSelection(event.currentTarget);
+              const anchor = getCommentBubbleAnchor(event.clientX, event.clientY);
+              if (selection) {
+                onCommentSelection?.(selection, anchor);
+              } else {
+                onCommentOverall?.(anchor);
+              }
+            }}
+            onBlur={onBlur}
+            rows={rows}
+            className="col-start-1 row-start-1 h-full min-h-full w-full resize-none overflow-hidden rounded-md border border-line bg-white px-3 py-2 text-sm leading-6 text-ink outline-none focus:border-violet/50 focus:ring-4 focus:ring-violet/10"
+          />
+        ) : onBeginEdit ? (
+          <button
+            type="button"
+            onClick={onBeginEdit}
+            onContextMenu={(event) => {
+              if (!onCommentOverall) return;
+              event.preventDefault();
+              onCommentOverall(getCommentBubbleAnchor(event.clientX, event.clientY));
+            }}
+            aria-label={`Edit ${label.toLowerCase()}`}
+            title={onCommentOverall ? "Right-click to comment on the whole caption" : undefined}
+            className="col-start-1 row-start-1 h-full w-full cursor-text whitespace-pre-wrap rounded-md border border-line bg-white px-3 py-2 text-left text-sm leading-6 text-ink transition hover:border-[#8bade4]/65 hover:bg-[#fefdf8]"
+          >
+            {value}
+          </button>
+        ) : (
+          <div className="col-start-1 row-start-1 h-full w-full whitespace-pre-wrap rounded-md border border-line bg-white px-3 py-2 text-left text-sm leading-6 text-ink">
+            {value}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
-function resizeTextareaToContent(textarea: HTMLTextAreaElement) {
-  textarea.style.height = "auto";
-  textarea.style.height = `${textarea.scrollHeight}px`;
+function getCommentBubbleAnchor(clientX: number, clientY: number): CommentAnchor {
+  const gap = 12;
+  const viewportPadding = 12;
+  const bubbleWidth = Math.min(352, window.innerWidth - viewportPadding * 2);
+  const estimatedBubbleHeight = Math.min(360, window.innerHeight - viewportPadding * 2);
+
+  return {
+    x: Math.max(viewportPadding, Math.min(clientX + gap, window.innerWidth - bubbleWidth - viewportPadding)),
+    y: Math.max(viewportPadding, Math.min(clientY + gap, window.innerHeight - estimatedBubbleHeight - viewportPadding)),
+  };
+}
+
+function createFeedbackId() {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function formatCaptionFeedbackComments(comments: CaptionFeedbackComment[]) {
+  return comments
+    .map((comment, index) =>
+      comment.target.kind === "selection"
+        ? `Targeted comment ${index + 1} for the passage “${comment.target.text}”: ${comment.feedback}`
+        : `Overall comment ${index + 1}: ${comment.feedback}`,
+    )
+    .join("\n");
+}
+
+function resolveTextSelection(value: string, selection: TextSelection): TextSelection | null {
+  if (value.slice(selection.start, selection.end) === selection.text) return selection;
+  const start = value.indexOf(selection.text);
+  return start >= 0 ? { ...selection, start, end: start + selection.text.length } : null;
+}
+
+function QueuedCommentsPopover({
+  ariaLabel,
+  comments,
+  activeCommentId,
+  onChange,
+  onDelete,
+  onReveal,
+  onClose,
+}: {
+  ariaLabel: string;
+  comments: Array<{
+    id: string;
+    label: string;
+    feedback: string;
+    context?: string;
+    canReveal?: boolean;
+    revealLabel?: string;
+    unavailableLabel?: string;
+    revealAriaLabel?: string;
+  }>;
+  activeCommentId?: string | null;
+  onChange: (id: string, feedback: string) => void;
+  onDelete: (id: string) => void;
+  onReveal?: (id: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <section
+      role="dialog"
+      aria-label={ariaLabel}
+      className="absolute right-0 top-[calc(100%+0.5rem)] z-50 w-[min(20rem,calc(100vw-2rem))] rounded-xl border border-[#8bade4]/40 bg-white p-3 shadow-[0_18px_48px_rgba(38,50,77,0.2)]"
+    >
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-bold text-ink">Comments</p>
+        <button
+          type="button"
+          aria-label={`Close ${ariaLabel.toLowerCase()}`}
+          onClick={onClose}
+          className="grid h-7 w-7 place-items-center rounded-full text-muted transition hover:bg-[#f7faff] hover:text-ink"
+        >
+          <XIcon className="h-4 w-4" />
+        </button>
+      </div>
+      <div className="mt-2 max-h-72 space-y-2 overflow-y-auto pr-0.5">
+        {comments.map((comment, index) => (
+          <div
+            key={comment.id}
+            className={`rounded-lg border p-2.5 transition ${
+              activeCommentId === comment.id
+                ? "border-[#8bade4] bg-[#f7faff] ring-2 ring-[#8bade4]/15"
+                : "border-line bg-[#fefdf8]"
+            }`}
+          >
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#7a87a5]">
+                {comment.label}
+              </span>
+              <button
+                type="button"
+                aria-label={`Delete comment ${index + 1}`}
+                onClick={() => onDelete(comment.id)}
+                className="grid h-6 w-6 place-items-center rounded-full text-muted transition hover:bg-rose-50 hover:text-rose-600"
+              >
+                <XIcon className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            {comment.context || comment.revealLabel ? (
+              <button
+                type="button"
+                aria-label={`${comment.revealAriaLabel ?? "Show comment target"} for comment ${index + 1}`}
+                onClick={() => onReveal?.(comment.id)}
+                disabled={!comment.canReveal}
+                className="mb-2 block w-full rounded-md bg-[#edf5ff] px-2.5 py-2 text-left transition hover:bg-[#dfeeff] disabled:cursor-default disabled:opacity-65"
+              >
+                {comment.context ? (
+                  <span className="block max-h-10 overflow-hidden text-xs leading-5 text-[#536a91]">
+                    “{comment.context}”
+                  </span>
+                ) : null}
+                <span className="mt-1 block text-[10px] font-bold uppercase tracking-[0.08em] text-[#6f89b4]">
+                  {comment.canReveal
+                    ? (comment.revealLabel ?? "Show target →")
+                    : (comment.unavailableLabel ?? "Target changed")}
+                </span>
+              </button>
+            ) : null}
+            <label>
+              <span className="sr-only">Edit comment {index + 1}</span>
+              <textarea
+                aria-label={`Edit comment ${index + 1}`}
+                value={comment.feedback}
+                onChange={(event) => onChange(comment.id, event.target.value)}
+                rows={2}
+                className="w-full resize-none rounded-md border border-line bg-white px-2.5 py-2 text-sm leading-5 text-ink outline-none focus:border-violet/50 focus:ring-4 focus:ring-violet/10"
+              />
+            </label>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function ContentFieldAction({
   icon,
   label,
+  ariaLabel,
   onClick,
   strong = false,
   disabled = false,
 }: {
   icon?: React.ReactNode;
   label: string;
+  ariaLabel?: string;
   onClick: () => void;
   strong?: boolean;
   disabled?: boolean;
@@ -1553,6 +2346,7 @@ function ContentFieldAction({
   return (
     <button
       type="button"
+      aria-label={ariaLabel}
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -1686,6 +2480,31 @@ function getPlatformCopy(platform: PlatformKey, content: PlatformContent) {
   }
 
   return "";
+}
+
+function getEditablePostText(platform: PlatformKey, content: PlatformContent) {
+  if (platform === "rednote" && "caption" in content) return content.caption;
+  return "content" in content ? content.content : "";
+}
+
+function withEditablePostText(platform: PlatformKey, content: PlatformContent, value: string): PlatformContent {
+  if (platform === "rednote" && "caption" in content) {
+    return { ...content, caption: value };
+  }
+  if ("content" in content) {
+    return { ...content, content: value };
+  }
+  return content;
+}
+
+function getFriendlyImageError(message: string) {
+  if (/insufficient credits|settings\/credits|\(402\)/i.test(message)) {
+    return "Image generation credits have run out. Add OpenRouter credits, then retry.";
+  }
+  if (/OPENROUTER_API_KEY is not configured/i.test(message)) {
+    return "Image generation is not configured yet. Add an OpenRouter API key, then retry.";
+  }
+  return message;
 }
 
 function cloneContent<T extends PlatformContent>(content: T): T {

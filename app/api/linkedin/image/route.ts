@@ -9,6 +9,7 @@ type ImageRequest = {
   generationId?: unknown;
   postText?: unknown;
   images?: unknown;
+  currentImageUrl?: unknown;
   instructions?: unknown; // optional extra constraints passed to the Image Director
 };
 
@@ -17,6 +18,7 @@ export async function POST(request: Request) {
   const generationId = typeof body.generationId === "string" ? body.generationId : "";
   const postText = typeof body.postText === "string" ? body.postText.trim() : "";
   const rawMaterialImages = parseUploadedImages(body.images);
+  const currentImageUrl = parseImageReference(body.currentImageUrl);
   const instructions = typeof body.instructions === "string" ? body.instructions.trim() : "";
 
   if (!generationId) {
@@ -28,7 +30,12 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { buffer, cost } = await generateLinkedInImageDirect(postText, rawMaterialImages, instructions || undefined);
+    const { buffer, cost } = await generateLinkedInImageDirect(
+      postText,
+      rawMaterialImages,
+      instructions || undefined,
+      currentImageUrl || undefined,
+    );
     const url = await uploadPostImage(buffer, `linkedin/${generationId}/${Date.now()}`);
 
     const image: PostImage = {
@@ -51,6 +58,12 @@ export async function POST(request: Request) {
     const message = caughtError instanceof Error ? caughtError.message : "Could not generate the LinkedIn image.";
     return Response.json({ error: message }, { status: 500 });
   }
+}
+
+function parseImageReference(value: unknown) {
+  if (typeof value !== "string") return "";
+  const normalized = value.trim();
+  return /^(https?:\/\/|data:image\/)/i.test(normalized) ? normalized : "";
 }
 
 function parseUploadedImages(value: unknown): UploadedImage[] {
