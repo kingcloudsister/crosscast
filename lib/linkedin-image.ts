@@ -17,11 +17,20 @@ export async function generateLinkedInImageDirect(
   postText: string,
   rawMaterialImages: UploadedImage[] = [],
   extraInstructions?: string,
+  currentImageUrl?: string,
 ) {
   const systemPrompt = loadLinkedInImageSystemPrompt();
-  const assetManifest = rawMaterialImages.length
-    ? `assets (attached as reference images, in order): ${rawMaterialImages
-        .map((image, index) => `asset_${index}${image.name ? ` = ${image.name}` : ""}`)
+  const references = [
+    ...(currentImageUrl ? [{ label: "current_generated_image", url: currentImageUrl, name: undefined }] : []),
+    ...rawMaterialImages.map((image, index) => ({
+      label: `asset_${index}`,
+      url: image.url,
+      name: image.name,
+    })),
+  ];
+  const assetManifest = references.length
+    ? `assets (attached as reference images, in order): ${references
+        .map((reference) => `${reference.label}${reference.name ? ` = ${reference.name}` : ""}`)
         .join(", ")}`
     : "assets: none provided";
 
@@ -36,6 +45,6 @@ export async function generateLinkedInImageDirect(
 
   return createOpenRouterImage({
     prompt,
-    inputReferences: rawMaterialImages.map((image) => image.url),
+    inputReferences: references.map((reference) => reference.url),
   });
 }
