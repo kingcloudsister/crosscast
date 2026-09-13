@@ -1,8 +1,9 @@
+import { syncSelectedVariant } from "@/lib/content-variants";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { uploadPostImage } from "@/lib/post-images";
 import { createOpenRouterImage } from "@/lib/openrouter";
 import { buildSlideImagePrompt, collectSlideAssetUrls, SLIDE_IMAGE_MODEL } from "@/lib/rednote-slides";
-import type { RedNoteSlideImage, RedNoteSlideSpec, UploadedImage } from "@/components/types";
+import type { RedNoteContent, RedNoteSlideImage, RedNoteSlideSpec, UploadedImage } from "@/components/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -196,7 +197,7 @@ async function saveRenderResultsOnGeneration(
   slideImages: RedNoteSlideImage[],
   slides: SlideInput[],
 ) {
-  const content = existingContent ?? {};
+  const content = (await loadGenerationContent(generationId)) ?? existingContent ?? {};
 
   // Persist the specs exactly as rendered (they carry inline text edits from the UI),
   // so what Kelly sees is what is stored.
@@ -210,7 +211,7 @@ async function saveRenderResultsOnGeneration(
 
   const { error } = await supabaseAdmin
     .from("generations")
-    .update({ content: { ...content, slideImages, ...(carouselSlides ? { carouselSlides } : {}) } })
+    .update({ content: syncSelectedVariant({ ...content, slideImages, ...(carouselSlides ? { carouselSlides } : {}) } as RedNoteContent) })
     .eq("id", generationId);
 
   if (error) {

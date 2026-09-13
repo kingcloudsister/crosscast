@@ -407,6 +407,8 @@ function PlatformReviewCard({
       : platform === "threads" && "content" in displayedContent
         ? withSelectedThreadsTopic(displayedContent as ThreadsContent, selectedThreadsTopic)
       : displayedContent;
+  const latestSelectedContentRef = useRef(selectedContent);
+  latestSelectedContentRef.current = selectedContent;
   const meta = platformMeta[platform];
   const isRecommended = displayedContent.recommended;
   const recommendedReason = getRecommendedReason(platform, displayedContent);
@@ -536,13 +538,21 @@ function PlatformReviewCard({
   };
 
   const selectRedNoteTitle = (index: number) => {
+    if (isSaving) return;
+    const next = withSelectedRedNoteTitle(displayedContent as RedNoteContent, index);
     setSelectedTitleIndex(index);
-    if (platform === "rednote" && draftContent) {
-      setDraftContent({
-        ...(draftContent as RedNoteContent),
-        selectedTitleIndex: index,
-      });
-    }
+    setDraftContent(next);
+    setIsSaving(true);
+    setError(null);
+    const save = onSavePlatform("rednote", next);
+    pendingSaveRef.current = save;
+    void save.catch((error: unknown) => {
+      setError(error instanceof Error ? error.message : "Could not save the title.");
+      setSelectedTitleIndex(getSelectedRedNoteTitleIndex(content as RedNoteContent));
+    }).finally(() => {
+      pendingSaveRef.current = null;
+      setIsSaving(false);
+    });
   };
 
   const selectThreadsTopic = (topic: string) => {
@@ -829,7 +839,8 @@ function PlatformReviewCard({
   const platformDraftPanel = isRecommended ? (
     platform === "rednote" ? (
       <RedNotePanel
-        content={displayedContent as RedNoteContent}
+        content={selectedContent as RedNoteContent}
+        onBeforeRender={async () => { await pendingSaveRef.current; }}
         isEditing={isEditing}
         selectedTitleIndex={selectedTitleIndex}
         generationId={generationId}
@@ -849,19 +860,20 @@ function PlatformReviewCard({
         }}
         onChange={(next) => (isEditing ? setDraftContent(next) : onPatchPlatform("rednote", next))}
         onSlideRevised={(slideNumber, spec, slideImage) => {
-          const base = content as RedNoteContent;
-          onPatchPlatform("rednote", {
+          const base = latestSelectedContentRef.current as RedNoteContent;
+          const next = {
             ...base,
             carouselSlides: base.carouselSlides.map((slide) =>
               slide.slideNumber === slideNumber ? { ...slide, spec } : slide,
             ),
-            slideImages: (base.slideImages ?? []).map((item) =>
-              item.slideNumber === slideNumber ? slideImage : item,
-            ),
-          });
+            slideImages: [...(base.slideImages ?? []).filter((item) => item.slideNumber !== slideNumber), slideImage]
+              .sort((a, b) => a.slideNumber - b.slideNumber),
+          };
+          latestSelectedContentRef.current = next;
+          onPatchPlatform("rednote", next);
         }}
         onRendered={(slideImages, backgrounds) => {
-          const base = content as RedNoteContent;
+          const base = latestSelectedContentRef.current as RedNoteContent;
           const backgroundBySlide = new Map(backgrounds.map((item) => [item.slideNumber, item.url]));
           onPatchPlatform("rednote", {
             ...base,
@@ -1091,6 +1103,7 @@ function VariantRail({
 
 function RedNotePanel({
   content,
+  onBeforeRender,
   isEditing,
   selectedTitleIndex,
   generationId,
@@ -1108,6 +1121,7 @@ function RedNotePanel({
   onRendered,
 }: {
   content: RedNoteContent;
+  onBeforeRender: () => Promise<void>;
   isEditing: boolean;
   selectedTitleIndex: number;
   generationId: string | null;
@@ -1227,6 +1241,7 @@ function RedNotePanel({
 
       <CarouselSection
         content={content}
+        onBeforeRender={onBeforeRender}
         generationId={generationId}
         briefImages={briefImages}
         onChange={onChange}
@@ -1257,6 +1272,7 @@ function updateSlideSpecText(
 // background, and a tucked-away direct text editor).
 function CarouselSection({
   content,
+  onBeforeRender,
   generationId,
   briefImages,
   onChange,
@@ -1264,6 +1280,7 @@ function CarouselSection({
   onSlideRevised,
 }: {
   content: RedNoteContent;
+  onBeforeRender: () => Promise<void>;
   generationId: string | null;
   briefImages: BriefState["images"];
   onChange: (content: RedNoteContent) => void;
@@ -1298,6 +1315,7 @@ function CarouselSection({
     setIsBusy(true);
     setError(null);
     try {
+      await onBeforeRender();
       const response = await fetch("/api/rednote/render", {
         method: "POST",
         headers: {
@@ -1335,6 +1353,7 @@ function CarouselSection({
     setIsBusy(true);
     setError(null);
     try {
+      await onBeforeRender();
       const response = await fetch("/api/rednote/slide-feedback", {
         method: "POST",
         headers: {
@@ -1345,6 +1364,8 @@ function CarouselSection({
           slideNumber: selectedSlide,
           spec: activeSlide.spec,
           comment: comment.trim(),
+          selectedTitle: getSelectedRedNoteTitle(content),
+          isCover: selectedSlide === content.carouselSlides[0]?.slideNumber,
           images: briefImages,
         }),
       });
@@ -2441,6 +2462,11 @@ function withSelectedRedNoteTitle(content: RedNoteContent, selectedTitleIndex: n
   return {
     ...content,
     selectedTitleIndex: normalizeTitleIndex(selectedTitleIndex, titleOptions),
+    carouselSlides: content.carouselSlides.map((slide, index) =>
+      index === 0 && slide.spec && titleOptions.length
+        ? { ...slide, spec: { ...slide.spec, text: { ...slide.spec.text, title: titleOptions[normalizeTitleIndex(selectedTitleIndex, titleOptions)] } } }
+        : slide,
+    ),
   };
 }
 

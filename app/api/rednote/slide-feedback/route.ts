@@ -1,3 +1,4 @@
+import { syncSelectedVariant } from "@/lib/content-variants";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { supabaseAdmin } from "@/lib/supabase-admin";
@@ -9,7 +10,7 @@ import {
   parseJsonFromOpenRouterContent,
 } from "@/lib/openrouter";
 import { buildSlideImagePrompt, collectSlideAssetUrls, SLIDE_IMAGE_MODEL } from "@/lib/rednote-slides";
-import type { RedNoteSlideImage, RedNoteSlideSpec, UploadedImage } from "@/components/types";
+import type { RedNoteContent, RedNoteSlideImage, RedNoteSlideSpec, UploadedImage } from "@/components/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -20,6 +21,8 @@ type FeedbackRequest = {
   spec?: unknown;
   comment?: unknown;
   images?: unknown;
+  selectedTitle?: unknown;
+  isCover?: unknown;
 };
 
 export async function POST(request: Request) {
@@ -43,7 +46,14 @@ export async function POST(request: Request) {
   }
 
   try {
-    const revisedSpec = await reviseSlideSpec(spec, comment);
+    const selectedTitle = typeof body.selectedTitle === "string" ? body.selectedTitle.trim() : "";
+    const revisionComment = selectedTitle
+      ? `${comment}\n\nThe chosen post title is: ${selectedTitle}. Preserve this title; do not revert to an earlier title.${body.isCover === true ? " Use it exactly as the cover headline." : ""}`
+      : comment;
+    const revisedSpec = await reviseSlideSpec(spec, revisionComment);
+    if (body.isCover === true && selectedTitle) {
+      revisedSpec.text = { ...revisedSpec.text, title: selectedTitle };
+    }
 
     // Slide 1's existing image anchors the carousel style for the regenerated slide.
     const existing = await loadExistingSlideImages(generationId);
@@ -167,16 +177,16 @@ async function saveRevisedSlide(
       )
     : existingContent.carouselSlides;
 
-  const slideImages = Array.isArray(existingContent.slideImages)
-    ? (existingContent.slideImages as RedNoteSlideImage[]).map((item) =>
-        item.slideNumber === slideNumber ? slideImage : item,
-      )
-    : [slideImage];
+  const existingImages = Array.isArray(existingContent.slideImages)
+    ? existingContent.slideImages as RedNoteSlideImage[]
+    : [];
+  const slideImages = [...existingImages.filter((item) => item.slideNumber !== slideNumber), slideImage]
+    .sort((a, b) => a.slideNumber - b.slideNumber);
 
   const { error } = await supabaseAdmin
     .from("generations")
     .update({
-      content: { ...existingContent, slideImages, ...(carouselSlides ? { carouselSlides } : {}) },
+      content: syncSelectedVariant({ ...existingContent, slideImages, ...(carouselSlides ? { carouselSlides } : {}) } as RedNoteContent),
     })
     .eq("id", generationId);
 
