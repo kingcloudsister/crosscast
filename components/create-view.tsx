@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ArrowLeftIcon, CheckIcon, ImageIcon, PlusIcon, XIcon } from "./icons";
 import { platformMeta } from "./mock-data";
 import type { BriefState, PlatformKey, SessionSummary } from "./types";
@@ -90,10 +90,11 @@ export function CreateView({
     return recommendations.length ? recommendations : ["threads"];
   }, [brief.images.length, brief.rawMaterial]);
 
-  const handleImages = async (files: FileList | null) => {
-    if (!files?.length) return;
+  const handleImages = async (files: FileList | File[] | null) => {
+    const imageFiles = Array.from(files ?? []).filter((file) => file.type.startsWith("image/"));
+    if (!imageFiles.length) return;
     const nextImages = await Promise.all(
-      Array.from(files).map(async (file) => ({
+      imageFiles.map(async (file) => ({
         id: crypto.randomUUID(),
         name: file.name,
         url: await readFileAsDataUrl(file),
@@ -101,6 +102,20 @@ export function CreateView({
     );
     update("images", [...brief.images, ...nextImages]);
   };
+
+  useEffect(() => {
+    if (stage !== "landing" && stage !== "intake") return;
+    const onPaste = (event: ClipboardEvent) => {
+      const images = getClipboardImages(event.clipboardData);
+      if (!images.length) return;
+      // Copied web images often carry text too; keep that text paste going into the notes field.
+      if (!event.clipboardData?.getData("text/plain")) event.preventDefault();
+      void handleImages(images);
+      setStage("intake");
+    };
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+  });
 
   const beginQuestions = () => {
     if (!hasMaterial) return;
@@ -370,7 +385,7 @@ function IntakeStage({
   brief: BriefState;
   sourceCount: number;
   onBriefChange: (brief: BriefState) => void;
-  onImages: (files: FileList | null) => void;
+  onImages: (files: FileList | File[] | null) => void;
   onBack: () => void;
   onContinue: () => void;
 }) {
@@ -391,7 +406,8 @@ function IntakeStage({
             Add screenshots or images
             <input type="file" accept="image/*" multiple className="sr-only" onChange={(event) => onImages(event.target.files)} />
           </label>
-          <span className="text-xs font-semibold text-[#9096b0]">{sourceCount ? `${sourceCount} source${sourceCount === 1 ? "" : "s"} added` : "Add at least one source"}</span>
+          <span className="text-xs text-[#9096b0]">or paste a screenshot with Ctrl/⌘ V</span>
+          <span className="ml-auto text-xs font-semibold text-[#9096b0]">{sourceCount ? `${sourceCount} source${sourceCount === 1 ? "" : "s"} added` : "Add at least one source"}</span>
         </div>
       </div>
 
@@ -684,4 +700,17 @@ function readFileAsDataUrl(file: File) {
     reader.onerror = () => reject(reader.error ?? new Error(`Could not read ${file.name}.`));
     reader.readAsDataURL(file);
   });
+}
+
+function getClipboardImages(data: DataTransfer | null) {
+  const stamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return Array.from(data?.files ?? [])
+    .filter((file) => file.type.startsWith("image/"))
+    .map((file, index, all) => {
+      // Clipboard screenshots arrive as a generic "image.png"; give them a recognizable name.
+      if (file.name && file.name !== "image.png") return file;
+      const extension = file.type.split("/")[1] || "png";
+      const suffix = all.length > 1 ? ` ${index + 1}` : "";
+      return new File([file], `Pasted screenshot ${stamp}${suffix}.${extension}`, { type: file.type });
+    });
 }
