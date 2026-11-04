@@ -195,7 +195,7 @@ export function CreateView({
   };
 
   return (
-    <section className="mx-auto w-full max-w-[1040px] px-6 py-8 lg:px-10 lg:py-10">
+    <section className="mx-auto w-full max-w-[1040px] px-4 py-6 sm:px-6 sm:py-8 lg:px-10 lg:py-10">
       <CreateProgress stage={stage} />
 
       {stage === "landing" ? (
@@ -263,7 +263,7 @@ export function CreateView({
 function CreateProgress({ stage }: { stage: CreateStage }) {
   const activeIndex = stage === "landing" ? 0 : stage === "intake" ? 1 : stage === "questions" ? 2 : 3;
   return (
-    <div className="mb-8 flex items-center gap-2" aria-label="Create progress">
+    <div className="mb-6 flex items-center gap-2 sm:mb-8" aria-label="Create progress">
       {["Start", "Sources", "Direction", "Platforms"].map((label, index) => (
         <div key={label} className="flex min-w-0 flex-1 items-center gap-2">
           <span
@@ -302,22 +302,22 @@ function LandingStage({
     <div>
       <div className="max-w-2xl">
         <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#7486a6]">Create something worth sharing</p>
-        <h1 className="mt-2 font-serif text-4xl leading-tight text-ink sm:text-5xl">What are we working with today?</h1>
+        <h1 className="mt-2 font-serif text-[2rem] leading-tight text-ink sm:text-5xl">What are we working with today?</h1>
         <p className="mt-4 max-w-xl text-[15px] leading-7 text-[#70778f]">
           Bring the material you already have, or start from an idea Crosscast noticed for you.
         </p>
       </div>
 
-      <div className="mt-8 grid gap-4 md:grid-cols-2">
+      <div className="mt-6 grid gap-3 sm:mt-8 sm:gap-4 md:grid-cols-2">
         <button
           type="button"
           onClick={onAddMaterial}
-          className="group min-h-48 rounded-2xl border border-[#8bade4]/45 bg-white p-6 text-left shadow-workspace transition hover:-translate-y-0.5 hover:border-[#8bade4] hover:shadow-lg"
+          className="group rounded-2xl border border-[#8bade4]/45 bg-white p-5 text-left sm:min-h-48 sm:p-6 shadow-workspace transition hover:-translate-y-0.5 hover:border-[#8bade4] hover:shadow-lg"
         >
           <span className="grid h-11 w-11 place-items-center rounded-xl bg-[#d3eafa] text-violet">
             <PlusIcon className="h-5 w-5" />
           </span>
-          <h2 className="mt-6 text-lg font-semibold text-ink">Add my material</h2>
+          <h2 className="mt-4 text-lg font-semibold text-ink sm:mt-6">Add my material</h2>
           <p className="mt-2 text-sm leading-6 text-[#70778f]">Paste notes or links, then add screenshots and images in one place.</p>
           <span className="mt-5 inline-flex text-sm font-semibold text-violet group-hover:translate-x-1 transition">Start with sources →</span>
         </button>
@@ -326,10 +326,10 @@ function LandingStage({
           type="button"
           onClick={onToggleIdeas}
           aria-expanded={isIdeasOpen}
-          className="group min-h-48 rounded-2xl border border-line bg-[#d3eafa]/35 p-6 text-left transition hover:-translate-y-0.5 hover:border-[#8bade4]/65 hover:bg-[#d3eafa]/55"
+          className="group rounded-2xl border border-line bg-[#d3eafa]/35 p-5 text-left sm:min-h-48 sm:p-6 transition hover:-translate-y-0.5 hover:border-[#8bade4]/65 hover:bg-[#d3eafa]/55"
         >
           <span className="grid h-11 w-11 place-items-center rounded-xl bg-[#fefdf8] text-violet ring-1 ring-[#8bade4]/25">✦</span>
-          <div className="mt-6 flex items-center justify-between gap-3">
+          <div className="mt-4 flex items-center justify-between gap-3 sm:mt-6">
             <h2 className="text-lg font-semibold text-ink">Explore suggested ideas</h2>
             <span className="rounded-full bg-white px-2.5 py-1 text-xs font-bold text-[#7486a6]">3 new</span>
           </div>
@@ -345,7 +345,7 @@ function LandingStage({
               key={idea.title}
               type="button"
               onClick={() => onChooseIdea(idea)}
-              className="flex w-full items-center justify-between gap-5 rounded-xl px-4 py-3 text-left transition hover:bg-[#d3eafa]/40"
+              className="flex w-full flex-col items-start gap-2 rounded-xl px-3 py-3 text-left transition hover:bg-[#d3eafa]/40 sm:flex-row sm:items-center sm:justify-between sm:gap-5 sm:px-4"
             >
               <span>
                 <span className="block text-sm font-semibold text-ink">{idea.title}</span>
@@ -361,9 +361,9 @@ function LandingStage({
         <button
           type="button"
           onClick={() => onResumeRecent(recentSession)}
-          className="mt-7 flex w-full items-center justify-between gap-4 rounded-xl border border-line bg-[#fefdf8] px-5 py-4 text-left transition hover:border-[#8bade4]/55 hover:bg-white"
+          className="mt-6 flex w-full flex-col items-start gap-2 rounded-xl border border-line bg-[#fefdf8] px-4 py-4 text-left sm:mt-7 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-5 transition hover:border-[#8bade4]/55 hover:bg-white"
         >
-          <span className="min-w-0">
+          <span className="w-full min-w-0 sm:w-auto">
             <span className="block text-[11px] font-bold uppercase tracking-[0.14em] text-[#9096b0]">Continue recent project</span>
             <span className="mt-1 block truncate text-sm font-semibold text-ink">{recentSession.title}</span>
           </span>
@@ -392,7 +392,7 @@ function IntakeStage({
   return (
     <div>
       <StageHeading eyebrow="Your sources" title="Put everything in one place." description="Notes, links, screenshots, and images can stay messy. Crosscast will organize them before asking what you want to make." />
-      <div className="mt-7 rounded-2xl border border-line bg-white p-5 shadow-workspace sm:p-6">
+      <div className="mt-6 rounded-2xl border border-line bg-white p-4 shadow-workspace sm:mt-7 sm:p-6">
         <textarea
           value={brief.rawMaterial}
           onChange={(event) => onBriefChange({ ...brief, rawMaterial: event.target.value })}
@@ -466,15 +466,15 @@ function QuestionStage({
 
       <div className="mt-5 space-y-3">
         {questions.slice(0, questionIndex).map((answeredQuestion) => (
-          <div key={answeredQuestion.key} className="flex items-center justify-between gap-4 rounded-xl border border-line bg-white px-4 py-3">
+          <div key={answeredQuestion.key} className="flex flex-col gap-0.5 rounded-xl border border-line bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
             <span className="text-sm text-[#70778f]">{answeredQuestion.prompt}</span>
             <span className="text-sm font-semibold text-ink">{answers[answeredQuestion.key]}</span>
           </div>
         ))}
 
-        <div className="rounded-2xl border border-[#8bade4]/55 bg-white p-6 shadow-workspace">
+        <div className="rounded-2xl border border-[#8bade4]/55 bg-white p-5 shadow-workspace sm:p-6">
           <p className="text-xs font-bold uppercase tracking-[0.14em] text-[#7486a6]">Question {questionIndex + 1}</p>
-          <h2 className="mt-2 text-2xl font-semibold text-ink">{question.prompt}</h2>
+          <h2 className="mt-2 text-xl font-semibold text-ink sm:text-2xl">{question.prompt}</h2>
           <p className="mt-2 text-sm leading-6 text-[#70778f]">{question.helper}</p>
           <div className="mt-6 flex flex-wrap gap-2.5">
             {question.options.map((option) => (
@@ -543,7 +543,7 @@ function ConfirmationStage({
     <div>
       <StageHeading eyebrow="Confirm the direction" title="Here’s the story Crosscast will develop." description="Keep this concise. Each selected platform will adapt the same narrative in its own way." />
 
-      <div className="mt-7 rounded-2xl border border-line bg-white p-6 shadow-workspace">
+      <div className="mt-6 rounded-2xl border border-line bg-white p-4 shadow-workspace sm:mt-7 sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <label className="block text-xs font-bold uppercase tracking-[0.14em] text-[#7486a6]">Narrative summary</label>
@@ -555,7 +555,7 @@ function ConfirmationStage({
           value={narrativeSummary}
           onChange={(event) => onNarrativeChange(event.target.value)}
           rows={3}
-          className="mt-3 w-full resize-none rounded-xl border border-line bg-[#fefdf8] px-4 py-3 text-[15px] leading-7 text-ink outline-none transition focus:border-[#8bade4] focus:ring-4 focus:ring-[#8bade4]/10"
+          className="mt-3 min-h-36 w-full resize-none rounded-xl border border-line bg-[#fefdf8] px-4 py-3 text-[15px] sm:min-h-0 leading-7 text-ink outline-none transition focus:border-[#8bade4] focus:ring-4 focus:ring-[#8bade4]/10"
         />
         <div className="mt-3 flex flex-wrap gap-2">
           {[answers.goal, answers.narrative].filter(Boolean).map((answer) => (
@@ -569,11 +569,11 @@ function ConfirmationStage({
           <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9096b0]">Tone</p>
           <p className="mt-1 text-sm font-semibold text-ink">{answers.tone || "Use my usual voice"}</p>
         </div>
-        <span className="text-xs text-[#9096b0]">Applied separately from the story</span>
+        <span className="hidden text-xs text-[#9096b0] sm:inline">Applied separately from the story</span>
       </div>
 
       <div className="mt-7">
-        <div className="flex items-end justify-between gap-4">
+        <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
           <div>
             <p className="text-xs font-bold uppercase tracking-[0.14em] text-[#7486a6]">Choose platforms</p>
             <h2 className="mt-1 text-xl font-semibold text-ink">Where should this story go?</h2>
@@ -592,7 +592,7 @@ function ConfirmationStage({
                 type="button"
                 onClick={() => onTogglePlatform(platform)}
                 aria-pressed={selected}
-                className={`relative rounded-2xl border p-5 text-left transition ${
+                className={`relative rounded-2xl border p-4 text-left transition sm:p-5 ${
                   selected
                     ? "border-[#8bade4] bg-[#d3eafa]/55 shadow-workspace"
                     : "border-line bg-white hover:border-[#8bade4]/55"
@@ -625,7 +625,7 @@ function StageHeading({ eyebrow, title, description }: { eyebrow: string; title:
   return (
     <div className="max-w-2xl">
       <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#7486a6]">{eyebrow}</p>
-      <h1 className="mt-2 font-serif text-3xl leading-tight text-ink sm:text-4xl">{title}</h1>
+      <h1 className="mt-2 font-serif text-[1.75rem] leading-tight text-ink sm:text-4xl">{title}</h1>
       <p className="mt-3 text-[15px] leading-7 text-[#70778f]">{description}</p>
     </div>
   );

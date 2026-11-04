@@ -72,7 +72,7 @@ export function CalendarView({ scheduledPosts, onCopyPost, onViewPost, onRemoveP
   };
 
   return (
-    <section className="mx-auto w-full max-w-6xl px-6 py-8 lg:px-10">
+    <section className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-8 lg:px-10">
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
         <div>
           <h1 className="text-2xl font-semibold text-ink">Content Calendar</h1>
@@ -89,8 +89,8 @@ export function CalendarView({ scheduledPosts, onCopyPost, onViewPost, onRemoveP
         </div>
       </div>
 
-      <div className="mt-6 rounded-lg border border-line bg-white p-5 shadow-workspace">
-        <div className="mb-5 flex items-center justify-between gap-3">
+      <div className="mt-6 rounded-lg border border-line bg-white p-3 shadow-workspace sm:p-5">
+        <div className="mb-4 flex items-center justify-between gap-3">
           <IconButton label="Previous month" onClick={() => setVisibleMonth(addMonths(visibleMonth, -1))}>
             <span aria-hidden="true">‹</span>
           </IconButton>
@@ -99,9 +99,12 @@ export function CalendarView({ scheduledPosts, onCopyPost, onViewPost, onRemoveP
             <span aria-hidden="true">›</span>
           </IconButton>
         </div>
-        <div className="grid grid-cols-7 border-y border-line py-2 text-center text-xs font-semibold uppercase text-muted">
+        <div className="grid grid-cols-7 border-y border-line py-2 text-center text-[11px] font-semibold uppercase text-muted sm:text-xs">
           {weekdays.map((day) => (
-            <span key={day}>{day}</span>
+            <span key={day}>
+              <span className="sm:hidden">{day.slice(0, 1)}</span>
+              <span className="hidden sm:inline">{day}</span>
+            </span>
           ))}
         </div>
         <div className="grid grid-cols-7 overflow-hidden rounded-b-md border-l border-line">
@@ -109,12 +112,12 @@ export function CalendarView({ scheduledPosts, onCopyPost, onViewPost, onRemoveP
             const dayPosts = postsByDay.get(formatDateKey(date)) ?? [];
             const isOutsideMonth = date.getMonth() !== visibleMonth.getMonth();
             return (
-              <div key={date.toISOString()} className="min-h-24 border-b border-r border-line p-2 sm:min-h-28">
-                <span className={`text-sm font-medium ${isOutsideMonth ? "text-slate-300" : "text-slate-700"}`}>
+              <div key={date.toISOString()} className="min-h-14 border-b border-r border-line p-1.5 sm:min-h-28 sm:p-2">
+                <span className={`text-xs font-medium sm:text-sm ${isOutsideMonth ? "text-slate-300" : "text-slate-700"}`}>
                   {date.getDate()}
                 </span>
                 {dayPosts.length ? (
-                  <div className="mt-3 flex flex-wrap gap-1">
+                  <div className="mt-1.5 flex flex-wrap gap-1 sm:mt-3">
                     {dayPosts.slice(0, 5).map((post) => (
                       <span
                         key={post.id}
@@ -167,7 +170,7 @@ export function CalendarView({ scheduledPosts, onCopyPost, onViewPost, onRemoveP
                     ) : null}
                   </p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   {post.postUrl ? (
                     <a
                       href={post.postUrl}
@@ -231,7 +234,7 @@ export function DashboardView({ scheduledPosts, onRemovePost }: DashboardViewPro
   };
 
   return (
-    <section className="mx-auto w-full max-w-6xl px-6 py-8 lg:px-10">
+    <section className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-8 lg:px-10">
       <h1 className="text-2xl font-semibold text-ink">Dashboard</h1>
       <p className="mt-2 text-sm text-muted">
         This month: {scheduledCount} scheduled{postedCount > 0 ? `, ${postedCount} published` : ""}.
@@ -241,17 +244,17 @@ export function DashboardView({ scheduledPosts, onRemovePost }: DashboardViewPro
         <p className="mt-5 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{removeError}</p>
       ) : null}
 
-      <div className="mt-6 grid gap-3 sm:grid-cols-3">
+      <div className="mt-6 grid grid-cols-3 gap-2 sm:gap-3">
         {platformOrder.map((platform) => {
           const meta = platformMeta[platform];
           const count = monthPosts.filter((post) => post.platform === platform).length;
           return (
-            <div key={platform} className={`rounded-lg border p-5 ${meta.borderClass} ${meta.bgClass}`}>
-              <div className="flex items-center gap-2">
-                <span className={`h-2.5 w-2.5 rounded-full ${meta.dot}`} />
-                <p className={`text-sm font-semibold ${meta.colorClass}`}>{meta.label}</p>
+            <div key={platform} className={`min-w-0 rounded-lg border p-3 sm:p-5 ${meta.borderClass} ${meta.bgClass}`}>
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${meta.dot}`} />
+                <p className={`truncate text-xs font-semibold sm:text-sm ${meta.colorClass}`}>{meta.label}</p>
               </div>
-              <p className={`mt-3 text-3xl font-semibold ${meta.colorClass}`}>{count}</p>
+              <p className={`mt-2 text-2xl font-semibold sm:mt-3 sm:text-3xl ${meta.colorClass}`}>{count}</p>
             </div>
           );
         })}
@@ -261,7 +264,45 @@ export function DashboardView({ scheduledPosts, onRemovePost }: DashboardViewPro
         <div className="border-b border-line px-5 py-4">
           <h2 className="text-lg font-semibold text-ink">Recent Posts</h2>
         </div>
-        <div className="overflow-x-auto">
+        <ul className="divide-y divide-line md:hidden">
+          {recentPosts.length ? (
+            recentPosts.map((post) => (
+              <li key={post.id} className="px-4 py-4">
+                <div className="flex items-start justify-between gap-3">
+                  <p className="min-w-0 text-sm font-medium leading-5 text-ink">{post.title}</p>
+                  <span className="shrink-0">{statusLabel(post.status)}</span>
+                </div>
+                <p className="mt-1.5 flex items-center gap-2 text-xs text-muted">
+                  <span className={`h-2 w-2 rounded-full ${platformMeta[post.platform].dot}`} />
+                  {platformMeta[post.platform].label} · {formatDateTime(post.scheduledAt)}
+                </p>
+                <div className="mt-3 flex gap-2">
+                  {post.postUrl ? (
+                    <a
+                      href={post.postUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex h-9 items-center gap-2 rounded-md border border-teal/30 bg-white px-3 text-sm font-semibold text-teal transition hover:border-teal/50"
+                    >
+                      <EyeIcon className="h-4 w-4" />
+                      View
+                    </a>
+                  ) : null}
+                  <SmallButton
+                    icon={<TrashIcon className="h-4 w-4" />}
+                    label={removingPostId === post.id ? "Removing..." : "Remove"}
+                    onClick={() => removePost(post)}
+                    disabled={removingPostId === post.id}
+                    danger
+                  />
+                </div>
+              </li>
+            ))
+          ) : (
+            <li className="px-4 py-6 text-sm text-muted">No recent posts yet.</li>
+          )}
+        </ul>
+        <div className="hidden overflow-x-auto md:block">
           <table className="w-full min-w-[680px] text-left text-sm">
             <thead className="border-b border-line bg-canvas text-xs uppercase text-muted">
               <tr>

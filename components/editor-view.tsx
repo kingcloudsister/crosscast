@@ -110,17 +110,17 @@ export function EditorView({
   }, [brief.selectedPlatforms, generation]);
 
   return (
-    <section className="mx-auto w-full max-w-[1320px] px-6 pb-10 pt-5">
-      <div className="mb-7 flex items-center gap-3 rounded-xl border border-line bg-white px-5 py-4 shadow-workspace">
+    <section className="mx-auto w-full max-w-[1320px] px-3 pb-10 pt-4 sm:px-6 sm:pt-5">
+      <div className="mb-5 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-line bg-white px-4 py-3 shadow-workspace sm:mb-7 sm:flex-nowrap sm:px-5 sm:py-4">
         <button
           type="button"
           onClick={onBack}
           aria-label="Back to brief"
-          className="shrink-0 text-slate-700 transition hover:text-ink"
+          className="-m-2 shrink-0 p-2 text-slate-700 transition hover:text-ink"
         >
           <ArrowLeftIcon className="h-4 w-4" />
         </button>
-        <p className="min-w-0 flex-1 truncate text-base font-semibold text-ink sm:text-xl">
+        <p className="min-w-0 flex-1 basis-[calc(100%-2.5rem)] truncate text-base font-semibold text-ink sm:basis-auto sm:text-xl">
           {brief.theme || "Untitled brief"}
         </p>
         {selectedPlatforms.length ? (
@@ -134,7 +134,7 @@ export function EditorView({
         <button
           type="button"
           onClick={() => setIsBriefOpen((open) => !open)}
-          className="shrink-0 rounded-md bg-canvas px-2.5 py-1.5 text-xs font-semibold text-muted transition hover:text-violet"
+          className="ml-auto shrink-0 rounded-md bg-canvas px-2.5 py-1.5 text-xs font-semibold text-muted transition hover:text-violet sm:ml-0"
         >
           {isBriefOpen ? "Hide brief ▴" : "View brief ▾"}
         </button>
@@ -144,7 +144,7 @@ export function EditorView({
 
       {selectedPlatforms.length ? (
         <>
-          <div className="flex gap-2">
+          <div className="flex gap-1 sm:gap-2">
             {selectedPlatforms.map((platform) => {
               const meta = platformMeta[platform];
               const isActive = platform === activePlatform;
@@ -154,16 +154,18 @@ export function EditorView({
                   key={platform}
                   type="button"
                   onClick={() => setActivePlatform(platform)}
-                  className={`flex flex-1 items-center justify-center gap-2.5 rounded-t-lg px-4 py-3 text-sm transition ${
+                  className={`flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-t-lg px-1.5 py-2.5 text-sm transition sm:flex-row sm:gap-2.5 sm:px-4 sm:py-3 ${
                     isActive
                       ? `border-b-2 bg-white font-bold text-ink ${meta.borderClass}`
                       : "bg-white/50 font-semibold text-muted hover:bg-white/80 hover:text-ink"
                   }`}
                 >
-                  <span className={`h-2 w-2 rounded-full ${meta.dot}`} />
-                  {meta.label}
+                  <span className="inline-flex items-center gap-1.5 sm:gap-2.5">
+                    <span className={`h-2 w-2 shrink-0 rounded-full ${meta.dot}`} />
+                    {meta.label}
+                  </span>
                   <span
-                    className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${platformLifecycleClass(lifecycle, statuses[platform])}`}
+                    className={`whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-semibold sm:text-[11px] ${platformLifecycleClass(lifecycle, statuses[platform])}`}
                   >
                     {platformLifecycleLabel(lifecycle, statuses[platform])}
                   </span>
@@ -931,7 +933,7 @@ function PlatformReviewCard({
 
   return (
     <div className="rounded-b-lg rounded-tr-lg border border-line bg-white shadow-workspace">
-      <div className="p-6">
+      <div className="p-4 sm:p-6">
         {!isRecommended ? (
           <div className="mb-4 flex justify-end">
             <button
@@ -1012,15 +1014,15 @@ function PlatformReviewCard({
       </div>
 
       {isRecommended ? (
-        <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-end gap-2 rounded-b-lg border-t border-line bg-white/95 px-6 py-3 backdrop-blur">
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="sticky bottom-[var(--mobile-nav-height)] z-10 flex flex-wrap items-center justify-end gap-2 rounded-b-lg border-t border-line bg-white/95 px-3 py-3 backdrop-blur sm:px-6">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto [&>button]:flex-1 sm:[&>button]:flex-none">
             <input
               ref={scheduleInputRef}
               type="datetime-local"
               value={scheduleDateTime}
               onChange={(event) => setScheduleDateTime(event.target.value)}
               title={postingRecommendation.reason}
-              className="h-10 rounded-md border border-line bg-canvas px-3 text-sm font-medium text-ink outline-none focus:border-violet/50 focus:ring-4 focus:ring-violet/10"
+              className="h-10 min-w-0 basis-full rounded-md border border-line bg-canvas px-3 text-sm font-medium text-ink outline-none focus:border-violet/50 focus:ring-4 focus:ring-violet/10 sm:basis-auto"
             />
             <ActionButton
               icon={<CheckIcon className="h-4 w-4" />}
@@ -1805,7 +1807,19 @@ function LinkedInImageSection({
     <div className="mt-5 rounded-md border border-line bg-canvas p-3">
       <div className="flex items-center justify-between gap-2">
         <p className="text-sm font-semibold text-ink">Post Image</p>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {image ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect();
+                openOverallFeedback(getCommentBubbleAnchor(rect.left, rect.bottom));
+              }}
+              className="inline-flex h-10 items-center rounded-md border border-line bg-white px-3 text-sm font-semibold text-ink md:hidden"
+            >
+              Comment
+            </button>
+          ) : null}
           {feedbackComments.length ? (
             <div className="relative">
               <ActionButton
@@ -2143,21 +2157,43 @@ function EditableBlock({
 
   return (
     <div className="block">
-      <span className="mb-2 flex min-h-8 items-center justify-between gap-3">
-        <span className="block text-sm font-semibold text-ink">{label}</span>
+      <span className="mb-2 flex min-h-8 flex-wrap items-center justify-between gap-x-3 gap-y-2">
+        <span className="flex items-center gap-2">
+          <span className="block text-sm font-semibold text-ink">{label}</span>
+          {onCommentOverall ? (
+            <button
+              type="button"
+              // Keep the textarea focused so a text selection survives the tap.
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect();
+                const anchor = getCommentBubbleAnchor(rect.left, rect.bottom);
+                const selection = textareaRef.current ? captureSelection(textareaRef.current) : null;
+                if (selection) {
+                  onCommentSelection?.(selection, anchor);
+                } else {
+                  onCommentOverall(anchor);
+                }
+              }}
+              className="rounded-md border border-line bg-white px-2 py-1 text-xs font-semibold text-muted transition hover:text-violet md:hidden"
+            >
+              Comment
+            </button>
+          ) : null}
+        </span>
         {actions}
       </span>
       <div className="grid w-full" style={{ minHeight: minimumHeight }}>
         <div
           aria-hidden="true"
-          className="invisible col-start-1 row-start-1 whitespace-pre-wrap rounded-md border border-transparent px-3 py-2 text-sm leading-6"
+          className="invisible col-start-1 row-start-1 whitespace-pre-wrap rounded-md border border-transparent px-3 py-2 text-base leading-6 md:text-sm"
         >
           {value || "\u200b"}
         </div>
         {highlightSelection ? (
           <div
             aria-label={`${label} with selected text highlighted`}
-            className="col-start-1 row-start-1 h-full w-full whitespace-pre-wrap rounded-md border border-[#8bade4]/55 bg-white px-3 py-2 text-left text-sm leading-6 text-ink ring-4 ring-[#8bade4]/10"
+            className="col-start-1 row-start-1 h-full w-full whitespace-pre-wrap rounded-md border border-[#8bade4]/55 bg-white px-3 py-2 text-left text-base leading-6 text-ink ring-4 ring-[#8bade4]/10 md:text-sm"
           >
             {value.slice(0, highlightSelection.start)}
             <mark className="rounded-sm bg-[#d3eafa] px-0.5 text-ink">
@@ -2185,7 +2221,7 @@ function EditableBlock({
             }}
             onBlur={onBlur}
             rows={rows}
-            className="col-start-1 row-start-1 h-full min-h-full w-full resize-none overflow-hidden rounded-md border border-line bg-white px-3 py-2 text-sm leading-6 text-ink outline-none focus:border-violet/50 focus:ring-4 focus:ring-violet/10"
+            className="col-start-1 row-start-1 h-full min-h-full w-full resize-none overflow-hidden rounded-md border border-line bg-white px-3 py-2 text-base leading-6 text-ink outline-none md:text-sm focus:border-violet/50 focus:ring-4 focus:ring-violet/10"
           />
         ) : onBeginEdit ? (
           <button
@@ -2198,12 +2234,12 @@ function EditableBlock({
             }}
             aria-label={`Edit ${label.toLowerCase()}`}
             title={onCommentOverall ? "Right-click to comment on the whole caption" : undefined}
-            className="col-start-1 row-start-1 h-full w-full cursor-text whitespace-pre-wrap rounded-md border border-line bg-white px-3 py-2 text-left text-sm leading-6 text-ink transition hover:border-[#8bade4]/65 hover:bg-[#fefdf8]"
+            className="col-start-1 row-start-1 h-full w-full cursor-text whitespace-pre-wrap rounded-md border border-line bg-white px-3 py-2 text-left text-base leading-6 text-ink transition md:text-sm hover:border-[#8bade4]/65 hover:bg-[#fefdf8]"
           >
             {value}
           </button>
         ) : (
-          <div className="col-start-1 row-start-1 h-full w-full whitespace-pre-wrap rounded-md border border-line bg-white px-3 py-2 text-left text-sm leading-6 text-ink">
+          <div className="col-start-1 row-start-1 h-full w-full whitespace-pre-wrap rounded-md border border-line bg-white px-3 py-2 text-left text-base leading-6 text-ink md:text-sm">
             {value}
           </div>
         )}
@@ -2404,7 +2440,7 @@ function ActionButton({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`inline-flex h-10 items-center gap-2 rounded-md px-3 text-sm font-semibold transition ${
+      className={`inline-flex h-10 items-center justify-center gap-2 rounded-md px-3 text-sm font-semibold transition ${
         strong
           ? "bg-[#8bade4] text-ink shadow-brand hover:bg-[#7a9edb] disabled:cursor-not-allowed disabled:opacity-60"
           : "border border-line bg-white text-ink hover:border-violet/40 hover:text-violet disabled:cursor-not-allowed disabled:opacity-60"

@@ -784,6 +784,13 @@ export function CrosscastApp() {
     setIsSessionsOpen(false);
   };
 
+  // Below xl the sessions panel is an overlay drawer, so close it once a choice is made.
+  const closeSessionsDrawer = () => {
+    if (!window.matchMedia("(min-width: 1280px)").matches) {
+      setIsSessionsOpen(false);
+    }
+  };
+
   const startNewSession = async () => {
     setLoadingSessionId("new");
     setIsSessionsOpen(true);
@@ -791,6 +798,7 @@ export function CrosscastApp() {
       await handleNewSession();
     } finally {
       setLoadingSessionId(null);
+      closeSessionsDrawer();
     }
   };
 
@@ -800,11 +808,12 @@ export function CrosscastApp() {
       await handleLoadSession(session);
     } finally {
       setLoadingSessionId(null);
+      closeSessionsDrawer();
     }
   };
 
   return (
-    <div className="flex min-h-screen bg-canvas text-ink">
+    <div className="flex min-h-dvh bg-canvas text-ink">
       <PrimaryRail activeView={view} isGenerating={isGenerating} onNavigate={navigatePrimary} />
 
       {isCreateArea && isSessionsOpen ? (
@@ -813,7 +822,7 @@ export function CrosscastApp() {
             type="button"
             aria-label="Close sessions"
             onClick={() => setIsSessionsOpen(false)}
-            className="fixed inset-0 left-[72px] z-30 bg-ink/10 backdrop-blur-[1px] xl:hidden"
+            className="fixed inset-0 z-[55] bg-ink/20 backdrop-blur-[1px] md:left-[72px] md:z-30 md:bg-ink/10 xl:hidden"
           />
           <SessionsPanel
             sessions={sessions}
@@ -828,7 +837,7 @@ export function CrosscastApp() {
       ) : null}
 
       <div className="min-w-0 flex flex-1 flex-col">
-        <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center justify-between border-b border-line bg-[#fefdf8]/95 px-4 shadow-[0_1px_2px_rgba(44,48,64,0.04)] backdrop-blur sm:px-6">
+        <header className="sticky top-0 z-20 flex h-[calc(4rem+env(safe-area-inset-top))] shrink-0 items-center justify-between border-b border-line bg-[#fefdf8]/95 px-4 pt-[env(safe-area-inset-top)] shadow-[0_1px_2px_rgba(44,48,64,0.04)] backdrop-blur sm:px-6">
           <div className="flex min-w-0 items-center gap-3">
             {isCreateArea ? (
               <button
@@ -852,8 +861,8 @@ export function CrosscastApp() {
 
         </header>
 
-        <main className="min-h-0 min-w-0 flex-1">
-          <div className="flex min-h-[calc(100vh-4rem)]">
+        <main className="min-h-0 min-w-0 flex-1 pb-[var(--mobile-nav-height)]">
+          <div className="flex">
             <div className="min-w-0 flex-1">
               {view === "create" ? (
                 <CreateView
@@ -920,7 +929,34 @@ function PrimaryRail({
   ];
 
   return (
-    <aside className="sticky top-0 z-50 flex h-screen w-[72px] shrink-0 flex-col border-r border-line bg-[#fefdf8]">
+    <>
+    <nav
+      aria-label="Primary navigation"
+      className="fixed inset-x-0 bottom-0 z-50 grid grid-cols-3 border-t border-line bg-[#fefdf8]/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden"
+    >
+      {items.map(({ key, label, icon: ItemIcon }) => {
+        const active = activePrimary === key;
+        return (
+          <button
+            key={key}
+            type="button"
+            onClick={() => onNavigate(key)}
+            aria-current={active ? "page" : undefined}
+            className={`relative flex h-16 flex-col items-center justify-center gap-1 text-[11px] font-semibold transition ${
+              active ? "text-violet" : "text-[#70778f]"
+            }`}
+          >
+            {active ? <span className="absolute top-0 h-[3px] w-10 rounded-b-full bg-[#8bade4]" /> : null}
+            <ItemIcon className="h-[22px] w-[22px]" />
+            <span>{label}</span>
+            {key === "create" && isGenerating ? (
+              <span className="absolute right-[calc(50%-18px)] top-3 h-2 w-2 animate-pulse rounded-full bg-[#8bade4]" aria-label="Generating content" />
+            ) : null}
+          </button>
+        );
+      })}
+    </nav>
+    <aside className="sticky top-0 z-50 hidden h-dvh w-[72px] shrink-0 flex-col border-r border-line bg-[#fefdf8] md:flex">
       <div className="grid h-16 shrink-0 place-items-center border-b border-line">
         <button
           type="button"
@@ -961,6 +997,7 @@ function PrimaryRail({
         <span className="text-[9px] font-semibold text-[#9096b0]">{isGenerating ? "Working" : "Ready"}</span>
       </div>
     </aside>
+    </>
   );
 }
 
@@ -989,8 +1026,8 @@ function SessionsPanel({
   }, {});
 
   return (
-    <aside className="fixed inset-y-0 left-[72px] z-40 flex w-72 shrink-0 flex-col border-r border-line bg-[#fefdf8] shadow-2xl xl:sticky xl:top-0 xl:z-30 xl:h-screen xl:shadow-none">
-        <div className="border-b border-line p-4">
+    <aside className="fixed inset-y-0 left-0 z-[60] flex w-[min(20rem,88vw)] shrink-0 flex-col border-r border-line bg-[#fefdf8] pb-[env(safe-area-inset-bottom)] shadow-2xl md:left-[72px] md:z-40 md:w-72 xl:sticky xl:top-0 xl:z-30 xl:h-dvh xl:shadow-none">
+        <div className="border-b border-line p-4 pt-[max(1rem,env(safe-area-inset-top))]">
           <div className="mb-4 flex items-center justify-between">
             <div>
               <h2 className="text-sm font-semibold text-ink">Sessions</h2>
