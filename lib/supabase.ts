@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+import { createBrowserClient } from "@supabase/ssr";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseKey =
@@ -7,11 +7,5 @@ const supabaseKey =
 
 export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseKey);
 
-export const supabase = isSupabaseConfigured
-  ? createClient(supabaseUrl!, supabaseKey!, {
-      auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-      },
-    })
-  : null;
+// Browser client that keeps the auth session in cookies, so middleware.ts can read it on every request.
+export const supabase = isSupabaseConfigured ? createBrowserClient(supabaseUrl!, supabaseKey!) : null;

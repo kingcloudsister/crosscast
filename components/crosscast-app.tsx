@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { syncSelectedVariant } from "@/lib/content-variants";
+import { supabase } from "@/lib/supabase";
 import { CalendarView, DashboardView } from "./calendar-dashboard";
 import { copyToClipboard } from "./clipboard";
 import { CreateView } from "./create-view";
@@ -858,7 +859,13 @@ export function CrosscastApp() {
               <h1 className="truncate text-sm font-semibold text-ink sm:text-[15px]">{contextualTitle}</h1>
             </div>
           </div>
-
+          <button
+            type="button"
+            onClick={() => void signOut()}
+            className="h-9 shrink-0 rounded-lg border border-line bg-white px-3 text-xs font-semibold text-muted transition hover:border-[#8bade4]/55 hover:text-violet"
+          >
+            Sign out
+          </button>
         </header>
 
         <main className="min-h-0 min-w-0 flex-1 pb-[var(--mobile-nav-height)]">
@@ -1368,4 +1375,9 @@ function getSelectedRedNoteTitle(content: RedNoteContent) {
       ? Math.min(Math.max(content.selectedTitleIndex, 0), Math.max(options.length - 1, 0))
       : 0;
   return options[index] ?? "";
+}
+
+async function signOut() {
+  await supabase?.auth.signOut();
+  window.location.assign("/login");
 }

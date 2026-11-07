@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@resvg/resvg-js": "^2.6.2",
+    "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.49.1",
     "next": "^15.2.4",
     "react": "^19.0.0",
